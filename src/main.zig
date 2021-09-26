@@ -76,7 +76,6 @@ const SignalData = extern struct {
     uctx: ?*const c_void,
 };
 const SignalList = std.ArrayList(SignalData);
-var maybe_signal_queue: ?SignalList = null;
 
 fn signal_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_void) callconv(.C) void {
     if (maybe_self_pipe) |self_pipe| {
@@ -151,7 +150,6 @@ pub fn main() anyerror!void {
         .reader = .{ .handle = self_pipe_fds[0] },
         .writer = .{ .handle = self_pipe_fds[1] },
     };
-    maybe_signal_queue = SignalList.init(allocator);
 
     // initialize the logfile, if given in LOGFILE env var
     const maybe_logfile_path = std.os.getenv("LOGFILE");
