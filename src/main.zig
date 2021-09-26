@@ -105,9 +105,6 @@ pub fn main() anyerror!void {
     _ = std.os.linux.sigaction(std.os.linux.SIG.INT, &sa, null);
 
     std.log.info("boot!", .{});
-    while (true) {
-        std.time.sleep(1 * std.time.ns_per_s);
-    }
     var nopts = std.mem.zeroes(c.notcurses_options);
     nopts.flags = c.NCOPTION_NO_ALTERNATE_SCREEN;
     nopts.flags |= c.NCOPTION_SUPPRESS_BANNERS;
@@ -122,36 +119,70 @@ pub fn main() anyerror!void {
     const mouse_enabled_return = c.notcurses_mouse_enable(nc);
     if (mouse_enabled_return != 0) return error.FailedToEnableMouse;
 
-    //var dimy: i32 = undefined;
-    //var dimx: i32 = undefined;
-    //var stdplane = c.notcurses_stddim_yx(nc, &dimy, &dimx).?;
+    var dimy: i32 = undefined;
+    var dimx: i32 = undefined;
+    var stdplane = c.notcurses_stddim_yx(nc, &dimy, &dimx).?;
 
-    //var plane = try draw_movable_box(stdplane);
-    //_ = c.notcurses_render(nc);
+    var plane = try draw_movable_box(stdplane);
+    _ = c.notcurses_render(nc);
 
-    //var cursor_state = CursorState{};
+    var cursor_state = CursorState{};
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const allocator = &arena.allocator;
+    const PollFdList = std.ArrayList(std.os.pollfd);
+    var sockets = PollFdList.init(allocator);
+    defer sockets.deinit();
+
+    const stdin_fd = std.io.getStdIn().handle;
+
+    try sockets.append(std.os.pollfd{
+        .fd = stdin_fd,
+        .events = std.os.linux.POLL.IN,
+        .revents = 0,
+    });
+
+    // TODO logging main() errors back to logger handler
 
     while (true) {
-        var inp: c.ncinput = undefined;
-        const character = c.notcurses_getc_blocking(nc, &inp);
-        logger.info("input {}", .{inp});
-        if (character == NOTCURSES_U32_ERROR) {
-            logger.err("Error: {s}", .{c.strerror(std.c._errno().*)});
-            return error.FailedToGetInput;
+        logger.info("poll!", .{});
+        const available = try std.os.poll(sockets.items, -1);
+        var must_read_terminal: bool = false;
+        try std.testing.expect(available > 0);
+        for (sockets.items) |pollfd| {
+            if (pollfd.revents == 0) continue;
+            if (pollfd.fd == stdin_fd) {
+                // we have stuff on stdin to read.
+                must_read_terminal = true;
+            }
         }
+        logger.info("polled! {}", .{must_read_terminal});
 
-        //const plane_x = c.ncplane_x(plane);
-        //const plane_y = c.ncplane_y(plane);
+        while (must_read_terminal) {
+            var inp: c.ncinput = undefined;
+            const character = c.notcurses_getc_nblock(nc, &inp);
+            if (character == 0) break;
+            logger.info("input {}", .{inp});
+            if (character == NOTCURSES_U32_ERROR) {
+                logger.err("Error: {s}", .{c.strerror(std.c._errno().*)});
+                return error.FailedToGetInput;
+            }
 
-        //if (inp.id == c.NCKEY_RESIZE) {
-        //    _ = c.notcurses_refresh(nc, null, null);
-        //} else if (inp.evtype == c.NCTYPE_PRESS and inp.x == plane_x and inp.y == plane_y) {
-        //    cursor_state.plane_drag = true;
-        //} else if (inp.evtype == c.NCTYPE_RELEASE) {
-        //    cursor_state.plane_drag = false;
-        //} else if (inp.evtype == c.NCTYPE_PRESS and cursor_state.plane_drag == true) {
-        //    _ = c.ncplane_move_yx(plane, inp.y, inp.x);
-        //    _ = c.notcurses_render(nc);
-        //}
+            const plane_x = c.ncplane_x(plane);
+            const plane_y = c.ncplane_y(plane);
+
+            if (inp.id == c.NCKEY_RESIZE) {
+                _ = c.notcurses_refresh(nc, null, null);
+            } else if (inp.evtype == c.NCTYPE_PRESS and inp.x == plane_x and inp.y == plane_y) {
+                cursor_state.plane_drag = true;
+            } else if (inp.evtype == c.NCTYPE_RELEASE) {
+                cursor_state.plane_drag = false;
+            } else if (inp.evtype == c.NCTYPE_PRESS and cursor_state.plane_drag == true) {
+                _ = c.ncplane_move_yx(plane, inp.y, inp.x);
+                _ = c.notcurses_render(nc);
+            }
+        }
     }
 }
