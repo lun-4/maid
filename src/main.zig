@@ -216,6 +216,25 @@ pub fn main() anyerror!void {
         }
         logger.info("polled! {}", .{must_read});
 
+        if (must_read.signals) {
+            var signal_buf: [1]u8 = undefined;
+            const read_bytes = try std.os.read(maybe_self_pipe.?.reader, &signal_buf);
+            try std.testing.expect(read_bytes == 1);
+            try std.testing.expect(signal_buf[0] == '.');
+            while (true) {
+                var maybe_signal_data = maybe_signal_queue.?.popOrNull();
+                if (maybe_signal_data) |signal_data| {
+                    if (signal_data.signal == std.os.SIG.SEGV) {
+                        zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
+                    } else {
+                        logger.info("exiting! with signal {d}", .{signal_data.signal});
+                        // TODO shutdown db, when we have one
+                        std.os.exit(1);
+                    }
+                }
+            }
+        }
+
         while (must_read.terminal) {
             var inp: c.ncinput = undefined;
             const character = c.notcurses_getc_nblock(nc, &inp);
@@ -239,25 +258,6 @@ pub fn main() anyerror!void {
             } else if (inp.evtype == c.NCTYPE_PRESS and cursor_state.plane_drag == true) {
                 _ = c.ncplane_move_yx(plane, inp.y, inp.x);
                 _ = c.notcurses_render(nc);
-            }
-        }
-
-        if (must_read.signals) {
-            var signal_buf: [1]u8 = undefined;
-            const read_bytes = try std.os.read(maybe_self_pipe.?.reader, &signal_buf);
-            try std.testing.expect(read_bytes == 1);
-            try std.testing.expect(signal_buf[0] == '.');
-            while (true) {
-                var maybe_signal_data = maybe_signal_queue.?.popOrNull();
-                if (maybe_signal_data) |signal_data| {
-                    if (signal_data.signal == std.os.SIG.SEGV) {
-                        zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
-                    } else {
-                        logger.info("exiting! with signal {d}", .{signal_data.signal});
-                        // TODO shutdown db, when we have one
-                        std.os.exit(1);
-                    }
-                }
             }
         }
     }
