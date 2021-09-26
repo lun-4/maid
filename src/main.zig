@@ -62,10 +62,10 @@ const CursorState = struct {
 
 const NOTCURSES_U32_ERROR = 4294967295;
 
-var zig_segfault_handler: fn (i32, *const std.os.linux.siginfo_t, ?*const c_void) callconv(.C) void = undefined;
+var zig_segfault_handler: fn (i32, *const std.os.siginfo_t, ?*const c_void) callconv(.C) void = undefined;
 
-fn quit_handler(signal: c_int, info: *const std.os.linux.siginfo_t, uctx: ?*const c_void) callconv(.C) void {
-    if (signal == std.os.linux.SIG.SEGV) {
+fn quit_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_void) callconv(.C) void {
+    if (signal == std.os.SIG.SEGV) {
         zig_segfault_handler(signal, info, uctx);
     } else {
         logger.info("exiting! {d}", .{signal});
@@ -88,7 +88,8 @@ pub fn main() anyerror!void {
 
     // configure signals
 
-    var mask = std.os.linux.empty_sigset;
+    var mask = std.os.empty_sigset;
+    // only linux and darwin implement sigaddset() on zig stdlib. huh.
     std.os.linux.sigaddset(&mask, std.os.SIG.TERM);
     std.os.linux.sigaddset(&mask, std.os.SIG.INT);
     var sa = std.os.Sigaction{
@@ -99,10 +100,10 @@ pub fn main() anyerror!void {
 
     var old_sa: std.os.Sigaction = undefined;
 
-    _ = std.os.linux.sigaction(std.os.linux.SIG.SEGV, &sa, &old_sa);
+    std.os.sigaction(std.os.SIG.SEGV, &sa, &old_sa);
     zig_segfault_handler = old_sa.handler.sigaction.?;
-    _ = std.os.linux.sigaction(std.os.linux.SIG.TERM, &sa, null);
-    _ = std.os.linux.sigaction(std.os.linux.SIG.INT, &sa, null);
+    std.os.sigaction(std.os.SIG.TERM, &sa, null);
+    std.os.sigaction(std.os.SIG.INT, &sa, null);
 
     std.log.info("boot!", .{});
     var nopts = std.mem.zeroes(c.notcurses_options);
@@ -140,7 +141,7 @@ pub fn main() anyerror!void {
 
     try sockets.append(std.os.pollfd{
         .fd = stdin_fd,
-        .events = std.os.linux.POLL.IN,
+        .events = std.os.POLL.IN,
         .revents = 0,
     });
 
