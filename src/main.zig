@@ -140,11 +140,6 @@ pub fn main() anyerror!void {
             return error.FailedToGetInput;
         }
 
-        if (inp.ctrl and inp.id == 'c') {
-            std.debug.warn("AA\n", .{});
-            break;
-        }
-
         //const plane_x = c.ncplane_x(plane);
         //const plane_y = c.ncplane_y(plane);
 
