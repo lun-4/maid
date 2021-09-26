@@ -150,6 +150,10 @@ pub fn main() anyerror!void {
         .reader = .{ .handle = self_pipe_fds[0] },
         .writer = .{ .handle = self_pipe_fds[1] },
     };
+    defer {
+        maybe_self_pipe.?.reader.close();
+        maybe_self_pipe.?.writer.close();
+    }
 
     // initialize the logfile, if given in LOGFILE env var
     const maybe_logfile_path = std.os.getenv("LOGFILE");
