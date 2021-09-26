@@ -97,7 +97,10 @@ const MainContext = struct {
     fn processNewSignals(self: Self) !void {
         _ = self;
         while (true) {
-            const signal_data = try maybe_self_pipe.?.reader.reader().readStruct(SignalData);
+            const signal_data = maybe_self_pipe.?.reader.reader().readStruct(SignalData) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return err,
+            };
             if (signal_data.signal == std.os.SIG.SEGV) {
                 zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
             } else {
