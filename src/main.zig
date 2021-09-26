@@ -92,6 +92,60 @@ fn signal_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_
     }
 }
 
+const MainContext = struct {
+    nc: *c.notcurses,
+    cursor_state: CursorState = .{},
+    const Self = @This();
+
+    fn processNewSignals(self: Self) !void {
+        _ = self;
+        var signal_buf: [1]u8 = undefined;
+        const read_bytes = try std.os.read(maybe_self_pipe.?.reader, &signal_buf);
+        try std.testing.expect(read_bytes == 1);
+        try std.testing.expect(signal_buf[0] == '.');
+        while (true) {
+            var maybe_signal_data = maybe_signal_queue.?.popOrNull();
+            if (maybe_signal_data) |signal_data| {
+                if (signal_data.signal == std.os.SIG.SEGV) {
+                    zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
+                } else {
+                    logger.info("exiting! with signal {d}", .{signal_data.signal});
+                    // TODO shutdown db, when we have one
+                    std.os.exit(1);
+                }
+            }
+        }
+    }
+
+    fn processTerminalEvents(self: *Self, plane: *c.ncplane) !void {
+        while (true) {
+            var inp: c.ncinput = undefined;
+            const character = c.notcurses_getc_nblock(self.nc, &inp);
+            if (character == 0) break;
+            logger.info("input {}", .{inp});
+            if (character == NOTCURSES_U32_ERROR) {
+                logger.err("Error: {s}", .{c.strerror(std.c._errno().*)});
+                return error.FailedToGetInput;
+            }
+
+            const plane_x = c.ncplane_x(plane);
+            const plane_y = c.ncplane_y(plane);
+
+            if (inp.id == c.NCKEY_RESIZE) {
+                _ = c.notcurses_refresh(self.nc, null, null);
+                _ = c.notcurses_render(self.nc);
+            } else if (inp.evtype == c.NCTYPE_PRESS and inp.x == plane_x and inp.y == plane_y) {
+                self.cursor_state.plane_drag = true;
+            } else if (inp.evtype == c.NCTYPE_RELEASE) {
+                self.cursor_state.plane_drag = false;
+            } else if (inp.evtype == c.NCTYPE_PRESS and self.cursor_state.plane_drag == true) {
+                _ = c.ncplane_move_yx(plane, inp.y, inp.x);
+                _ = c.notcurses_render(self.nc);
+            }
+        }
+    }
+};
+
 pub fn main() anyerror!void {
     // configure requirements for signal handling
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -178,7 +232,14 @@ pub fn main() anyerror!void {
     var plane = try draw_movable_box(stdplane);
     _ = c.notcurses_render(nc);
 
-    var cursor_state = CursorState{};
+    // our main loop is basically polling for stdin and the signal selfpipe.
+    //
+    // if stdin has data, let notcurses consume it, keep it in a loop so
+    // 	all possible events are consumed, instead of a single one (which would
+    // 	cause drift)
+    //
+    // if signal selfpipe has data, consume it from the signal queue.
+    // 	if we get a SIGSEGV, call zig_segfault_handler
 
     const PollFdList = std.ArrayList(std.os.pollfd);
     var sockets = PollFdList.init(allocator);
@@ -197,67 +258,26 @@ pub fn main() anyerror!void {
         .revents = 0,
     });
 
+    var ctx = MainContext{ .nc = nc };
+
     // TODO logging main() errors back to logger handler
-    const MustRead = struct { terminal: bool = false, signals: bool = false };
 
     while (true) {
         logger.info("poll!", .{});
         const available = try std.os.poll(sockets.items, -1);
-        var must_read = MustRead{};
         try std.testing.expect(available > 0);
         for (sockets.items) |pollfd| {
             if (pollfd.revents == 0) continue;
-            if (pollfd.fd == stdin_fd) {
-                must_read.terminal = true;
-            }
+
+            // signals have higher priority, as if we got a SIGTERM,
+            // notcurses WILL have destroyed its context and resetted the
+            // terminal to a good state, which means we must not render shit.
             if (pollfd.fd == maybe_self_pipe.?.reader) {
-                must_read.signals = true;
-            }
-        }
-        logger.info("polled! {}", .{must_read});
-
-        if (must_read.signals) {
-            var signal_buf: [1]u8 = undefined;
-            const read_bytes = try std.os.read(maybe_self_pipe.?.reader, &signal_buf);
-            try std.testing.expect(read_bytes == 1);
-            try std.testing.expect(signal_buf[0] == '.');
-            while (true) {
-                var maybe_signal_data = maybe_signal_queue.?.popOrNull();
-                if (maybe_signal_data) |signal_data| {
-                    if (signal_data.signal == std.os.SIG.SEGV) {
-                        zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
-                    } else {
-                        logger.info("exiting! with signal {d}", .{signal_data.signal});
-                        // TODO shutdown db, when we have one
-                        std.os.exit(1);
-                    }
-                }
-            }
-        }
-
-        while (must_read.terminal) {
-            var inp: c.ncinput = undefined;
-            const character = c.notcurses_getc_nblock(nc, &inp);
-            if (character == 0) break;
-            logger.info("input {}", .{inp});
-            if (character == NOTCURSES_U32_ERROR) {
-                logger.err("Error: {s}", .{c.strerror(std.c._errno().*)});
-                return error.FailedToGetInput;
+                try ctx.processNewSignals();
             }
 
-            const plane_x = c.ncplane_x(plane);
-            const plane_y = c.ncplane_y(plane);
-
-            if (inp.id == c.NCKEY_RESIZE) {
-                _ = c.notcurses_refresh(nc, null, null);
-                _ = c.notcurses_render(nc);
-            } else if (inp.evtype == c.NCTYPE_PRESS and inp.x == plane_x and inp.y == plane_y) {
-                cursor_state.plane_drag = true;
-            } else if (inp.evtype == c.NCTYPE_RELEASE) {
-                cursor_state.plane_drag = false;
-            } else if (inp.evtype == c.NCTYPE_PRESS and cursor_state.plane_drag == true) {
-                _ = c.ncplane_move_yx(plane, inp.y, inp.x);
-                _ = c.notcurses_render(nc);
+            if (pollfd.fd == stdin_fd) {
+                try ctx.processTerminalEvents(plane);
             }
         }
     }
