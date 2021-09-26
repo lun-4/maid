@@ -60,24 +60,55 @@ const CursorState = struct {
     plane_drag: bool = false,
 };
 
+const Pipe = struct {
+    reader: std.os.fd_t,
+    writer: std.os.fd_t,
+};
+
 const NOTCURSES_U32_ERROR = 4294967295;
 
 var zig_segfault_handler: fn (i32, *const std.os.siginfo_t, ?*const c_void) callconv(.C) void = undefined;
+var maybe_self_pipe: ?Pipe = null;
 
-fn quit_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_void) callconv(.C) void {
-    if (signal == std.os.SIG.SEGV) {
-        zig_segfault_handler(signal, info, uctx);
-    } else {
-        logger.info("exiting! {d}", .{signal});
-        std.os.exit(1);
+const SignalData = struct {
+    signal: c_int,
+    info: std.os.siginfo_t,
+    uctx: ?*const c_void,
+};
+const SignalList = std.ArrayList(SignalData);
+var maybe_signal_queue: ?SignalList = null;
+
+fn signal_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_void) callconv(.C) void {
+    if (maybe_self_pipe) |self_pipe| {
+        _ = std.os.write(self_pipe.writer, ".") catch return;
+
+        if (maybe_signal_queue) |*signal_queue| {
+            signal_queue.append(.{
+                .signal = signal,
+                .info = info.*,
+                .uctx = uctx,
+            }) catch return;
+        }
     }
 }
 
 pub fn main() anyerror!void {
-    const logfile_path = std.os.getenv("LOGFILE");
-    if (logfile_path != null) {
+    // configure requirements for signal handling
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        _ = gpa.deinit();
+    }
+
+    const allocator = &gpa.allocator;
+    const self_pipe_fds = try std.os.pipe();
+    maybe_self_pipe = .{ .reader = self_pipe_fds[0], .writer = self_pipe_fds[1] };
+    maybe_signal_queue = SignalList.init(allocator);
+
+    // initialize the logfile, if given in LOGFILE env var
+    const maybe_logfile_path = std.os.getenv("LOGFILE");
+    if (maybe_logfile_path) |logfile_path| {
         logfile_optional = try std.fs.cwd().createFile(
-            logfile_path.?,
+            logfile_path,
             .{ .truncate = true, .read = false },
         );
     }
@@ -86,20 +117,40 @@ pub fn main() anyerror!void {
         if (logfile_optional) |logfile| logfile.close();
     }
 
-    // configure signals
+    // configure signal handler
+    // Zig attaches a handler to SIGSEGV to provide pretty output on segfaults,
+    // but we also want to attach our own shutdown code to other signals
+    // like SIGINT, SIGTERM, etc.
+    //
+    // there can only be one signal handler declared in the system, so we
+    // need to extract the zig signal handler, and call it on our own
+    //
+    // notcurses will do the same behavior but for the signal handler we
+    // provide, so everything has a way to shutdown safely.
+    //
+    // NOTE: do not trust your engineering skills on safely shutting down
+    // on a SIGSEGV. even on maid's signal handler, only signals we actually
+    // want cause a safe DB shutdown.
+    //
+    // Engineer to always be safe, even on a hard power off.
+    //
+    // Our signal handler uses the self-pipe trick to provide DB shutdown
+    // on a CTRL-C while also mainaining overall non-blocking I/O structure
+    // in code.
 
     var mask = std.os.empty_sigset;
     // only linux and darwin implement sigaddset() on zig stdlib. huh.
     std.os.linux.sigaddset(&mask, std.os.SIG.TERM);
     std.os.linux.sigaddset(&mask, std.os.SIG.INT);
     var sa = std.os.Sigaction{
-        .handler = .{ .sigaction = quit_handler },
+        .handler = .{ .sigaction = signal_handler },
         .mask = mask,
         .flags = 0,
     };
 
+    // declare handler for SIGSEGV, catching the "old" one
+    // (zig sets its own BEFORE calling main(), see lib/std/start.zig)
     var old_sa: std.os.Sigaction = undefined;
-
     std.os.sigaction(std.os.SIG.SEGV, &sa, &old_sa);
     zig_segfault_handler = old_sa.handler.sigaction.?;
     std.os.sigaction(std.os.SIG.TERM, &sa, null);
@@ -129,10 +180,6 @@ pub fn main() anyerror!void {
 
     var cursor_state = CursorState{};
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    const allocator = &arena.allocator;
     const PollFdList = std.ArrayList(std.os.pollfd);
     var sockets = PollFdList.init(allocator);
     defer sockets.deinit();
@@ -144,24 +191,32 @@ pub fn main() anyerror!void {
         .events = std.os.POLL.IN,
         .revents = 0,
     });
+    try sockets.append(std.os.pollfd{
+        .fd = maybe_self_pipe.?.reader,
+        .events = std.os.POLL.IN,
+        .revents = 0,
+    });
 
     // TODO logging main() errors back to logger handler
+    const MustRead = struct { terminal: bool = false, signals: bool = false };
 
     while (true) {
         logger.info("poll!", .{});
         const available = try std.os.poll(sockets.items, -1);
-        var must_read_terminal: bool = false;
+        var must_read = MustRead{};
         try std.testing.expect(available > 0);
         for (sockets.items) |pollfd| {
             if (pollfd.revents == 0) continue;
             if (pollfd.fd == stdin_fd) {
-                // we have stuff on stdin to read.
-                must_read_terminal = true;
+                must_read.terminal = true;
+            }
+            if (pollfd.fd == maybe_self_pipe.?.reader) {
+                must_read.signals = true;
             }
         }
-        logger.info("polled! {}", .{must_read_terminal});
+        logger.info("polled! {}", .{must_read});
 
-        while (must_read_terminal) {
+        while (must_read.terminal) {
             var inp: c.ncinput = undefined;
             const character = c.notcurses_getc_nblock(nc, &inp);
             if (character == 0) break;
@@ -176,6 +231,7 @@ pub fn main() anyerror!void {
 
             if (inp.id == c.NCKEY_RESIZE) {
                 _ = c.notcurses_refresh(nc, null, null);
+                _ = c.notcurses_render(nc);
             } else if (inp.evtype == c.NCTYPE_PRESS and inp.x == plane_x and inp.y == plane_y) {
                 cursor_state.plane_drag = true;
             } else if (inp.evtype == c.NCTYPE_RELEASE) {
@@ -183,6 +239,25 @@ pub fn main() anyerror!void {
             } else if (inp.evtype == c.NCTYPE_PRESS and cursor_state.plane_drag == true) {
                 _ = c.ncplane_move_yx(plane, inp.y, inp.x);
                 _ = c.notcurses_render(nc);
+            }
+        }
+
+        if (must_read.signals) {
+            var signal_buf: [1]u8 = undefined;
+            const read_bytes = try std.os.read(maybe_self_pipe.?.reader, &signal_buf);
+            try std.testing.expect(read_bytes == 1);
+            try std.testing.expect(signal_buf[0] == '.');
+            while (true) {
+                var maybe_signal_data = maybe_signal_queue.?.popOrNull();
+                if (maybe_signal_data) |signal_data| {
+                    if (signal_data.signal == std.os.SIG.SEGV) {
+                        zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
+                    } else {
+                        logger.info("exiting! with signal {d}", .{signal_data.signal});
+                        // TODO shutdown db, when we have one
+                        std.os.exit(1);
+                    }
+                }
             }
         }
     }
