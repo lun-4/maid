@@ -61,8 +61,8 @@ const CursorState = struct {
 };
 
 const Pipe = struct {
-    reader: std.os.fd_t,
-    writer: std.os.fd_t,
+    reader: std.fs.File,
+    writer: std.fs.File,
 };
 
 const NOTCURSES_U32_ERROR = 4294967295;
@@ -70,7 +70,7 @@ const NOTCURSES_U32_ERROR = 4294967295;
 var zig_segfault_handler: fn (i32, *const std.os.siginfo_t, ?*const c_void) callconv(.C) void = undefined;
 var maybe_self_pipe: ?Pipe = null;
 
-const SignalData = struct {
+const SignalData = extern struct {
     signal: c_int,
     info: std.os.siginfo_t,
     uctx: ?*const c_void,
@@ -80,39 +80,31 @@ var maybe_signal_queue: ?SignalList = null;
 
 fn signal_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_void) callconv(.C) void {
     if (maybe_self_pipe) |self_pipe| {
-        _ = std.os.write(self_pipe.writer, ".") catch return;
-
-        if (maybe_signal_queue) |*signal_queue| {
-            signal_queue.append(.{
-                .signal = signal,
-                .info = info.*,
-                .uctx = uctx,
-            }) catch return;
-        }
+        const signal_data = SignalData{
+            .signal = signal,
+            .info = info.*,
+            .uctx = uctx,
+        };
+        self_pipe.writer.writer().writeStruct(signal_data) catch return;
     }
 }
 
 const MainContext = struct {
+    allocator: *std.mem.Allocator,
     nc: *c.notcurses,
     cursor_state: CursorState = .{},
     const Self = @This();
 
     fn processNewSignals(self: Self) !void {
         _ = self;
-        var signal_buf: [1]u8 = undefined;
-        const read_bytes = try std.os.read(maybe_self_pipe.?.reader, &signal_buf);
-        try std.testing.expect(read_bytes == 1);
-        try std.testing.expect(signal_buf[0] == '.');
         while (true) {
-            var maybe_signal_data = maybe_signal_queue.?.popOrNull();
-            if (maybe_signal_data) |signal_data| {
-                if (signal_data.signal == std.os.SIG.SEGV) {
-                    zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
-                } else {
-                    logger.info("exiting! with signal {d}", .{signal_data.signal});
-                    // TODO shutdown db, when we have one
-                    std.os.exit(1);
-                }
+            const signal_data = try maybe_self_pipe.?.reader.reader().readStruct(SignalData);
+            if (signal_data.signal == std.os.SIG.SEGV) {
+                zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
+            } else {
+                logger.info("exiting! with signal {d}", .{signal_data.signal});
+                // TODO shutdown db, when we have one
+                std.os.exit(1);
             }
         }
     }
@@ -155,7 +147,10 @@ pub fn main() anyerror!void {
 
     const allocator = &gpa.allocator;
     const self_pipe_fds = try std.os.pipe();
-    maybe_self_pipe = .{ .reader = self_pipe_fds[0], .writer = self_pipe_fds[1] };
+    maybe_self_pipe = .{
+        .reader = .{ .handle = self_pipe_fds[0] },
+        .writer = .{ .handle = self_pipe_fds[1] },
+    };
     maybe_signal_queue = SignalList.init(allocator);
 
     // initialize the logfile, if given in LOGFILE env var
@@ -253,12 +248,12 @@ pub fn main() anyerror!void {
         .revents = 0,
     });
     try sockets.append(std.os.pollfd{
-        .fd = maybe_self_pipe.?.reader,
+        .fd = maybe_self_pipe.?.reader.handle,
         .events = std.os.POLL.IN,
         .revents = 0,
     });
 
-    var ctx = MainContext{ .nc = nc };
+    var ctx = MainContext{ .nc = nc, .allocator = allocator };
 
     // TODO logging main() errors back to logger handler
 
@@ -272,7 +267,7 @@ pub fn main() anyerror!void {
             // signals have higher priority, as if we got a SIGTERM,
             // notcurses WILL have destroyed its context and resetted the
             // terminal to a good state, which means we must not render shit.
-            if (pollfd.fd == maybe_self_pipe.?.reader) {
+            if (pollfd.fd == maybe_self_pipe.?.reader.handle) {
                 try ctx.processNewSignals();
             }
 
