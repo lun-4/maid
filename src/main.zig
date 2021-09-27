@@ -56,6 +56,40 @@ fn draw_movable_box(nc: *c.ncplane) !*c.ncplane {
     }
 }
 
+fn draw_task_tree_example(nc: *c.ncplane) !*c.ncplane {
+    var nopts = std.mem.zeroes(c.ncplane_options);
+    nopts.y = 5;
+    nopts.x = 5;
+    nopts.rows = 30;
+    nopts.cols = 30;
+
+    var n_optional = c.ncplane_create(nc, &nopts);
+    errdefer {
+        _ = c.ncplane_destroy(n_optional);
+    }
+    if (n_optional) |plane| {
+        const color_return = c.ncplane_set_fg_rgb8(plane, 255, 0, 255);
+        if (color_return != 0) return error.FailedToSetColor;
+
+        if (c.ncplane_putstr_yx(plane, 0, 0, "test task") < 0) {
+            return error.FailedToPutString;
+        }
+        if (c.ncplane_putstr_yx(plane, 1, 0, "├─ subtask 1") < 0) {
+            return error.FailedToPutString;
+        }
+        if (c.ncplane_putstr_yx(plane, 2, 0, "├─ subtask 2") < 0) {
+            return error.FailedToPutString;
+        }
+        if (c.ncplane_putstr_yx(plane, 3, 0, "└─ subtask 3") < 0) {
+            return error.FailedToPutString;
+        }
+
+        return plane;
+    } else {
+        return error.FailedToCreateTetrominoPlane;
+    }
+}
+
 const CursorState = struct {
     plane_drag: bool = false,
 };
@@ -96,6 +130,7 @@ const MainContext = struct {
 
     fn processNewSignals(self: Self) !void {
         _ = self;
+
         while (true) {
             const signal_data = maybe_self_pipe.?.reader.reader().readStruct(SignalData) catch |err| switch (err) {
                 error.EndOfStream => break,
@@ -229,7 +264,7 @@ pub fn main() anyerror!void {
     var dimx: i32 = undefined;
     var stdplane = c.notcurses_stddim_yx(nc, &dimy, &dimx).?;
 
-    var plane = try draw_movable_box(stdplane);
+    var plane = try draw_task_tree_example(stdplane);
     _ = c.notcurses_render(nc);
 
     // our main loop is basically polling for stdin and the signal selfpipe.
