@@ -56,37 +56,80 @@ fn draw_movable_box(nc: *c.ncplane) !*c.ncplane {
     }
 }
 
-fn draw_task_tree_example(nc: *c.ncplane) !*c.ncplane {
+const Task = struct {
+    // TODO id: u64,
+    text: []const u8,
+    completed: bool,
+    children: []Task,
+
+    // TODO computed_priority: ?u32 = null,
+};
+
+const DrawState = struct {
+    x_offset: usize = 0,
+    y_offset: usize = 0,
+};
+
+fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *DrawState) anyerror!void {
+    _ = draw_state;
+
+    var node_text_buffer: [256]u8 = undefined;
+    //const tree_prefix = if (idx < task.children.len) "├─" else "└─";
+    const tree_prefix = "p";
+    const completed_text = if (task.completed) "C" else " ";
+    const node_text_full = try std.fmt.bufPrint(&node_text_buffer, "{s}{s}{s}", .{ tree_prefix, completed_text, task.text });
+    node_text_buffer[node_text_full.len] = 0;
+    const node_text_full_cstr: [:0]const u8 = node_text_buffer[0..node_text_full.len :0];
+
+    logger.info("{s} state={}", .{ node_text_full, draw_state });
+
+    // now that we know what we're going to draw, we can create the ncplane
+
+    var nopts = std.mem.zeroes(c.ncplane_options);
+    nopts.y = @intCast(c_int, draw_state.y_offset);
+    nopts.x = @intCast(c_int, draw_state.x_offset);
+    nopts.rows = 1;
+    nopts.cols = @intCast(c_int, node_text_full_cstr.len);
+
+    var maybe_plane = c.ncplane_create(parent_plane, &nopts);
+    errdefer {
+        _ = c.ncplane_destroy(maybe_plane);
+    }
+    if (maybe_plane) |plane| {
+        if (c.ncplane_putstr_yx(plane, 0, 0, node_text_full_cstr) < 0) {
+            return error.FailedToPutString;
+        }
+
+        const old_draw_state = draw_state.*;
+
+        draw_state.x_offset = 1;
+        draw_state.y_offset = 1;
+        for (task.children) |*child| {
+            try draw_task_element(plane, child, draw_state);
+        }
+        draw_state.* = old_draw_state;
+    }
+}
+
+fn draw_task(parent_plane: *c.ncplane, task: *const Task) !*c.ncplane {
     var nopts = std.mem.zeroes(c.ncplane_options);
     nopts.y = 5;
     nopts.x = 5;
     nopts.rows = 30;
     nopts.cols = 30;
 
-    var n_optional = c.ncplane_create(nc, &nopts);
+    var maybe_plane = c.ncplane_create(parent_plane, &nopts);
     errdefer {
-        _ = c.ncplane_destroy(n_optional);
+        _ = c.ncplane_destroy(maybe_plane);
     }
-    if (n_optional) |plane| {
-        const color_return = c.ncplane_set_fg_rgb8(plane, 255, 0, 255);
+    if (maybe_plane) |plane| {
+        const color_return = c.ncplane_set_fg_rgb8(plane, 255, 255, 255);
         if (color_return != 0) return error.FailedToSetColor;
-
-        if (c.ncplane_putstr_yx(plane, 0, 0, "test task") < 0) {
-            return error.FailedToPutString;
-        }
-        if (c.ncplane_putstr_yx(plane, 1, 0, "├─ subtask 1") < 0) {
-            return error.FailedToPutString;
-        }
-        if (c.ncplane_putstr_yx(plane, 2, 0, "├─ subtask 2") < 0) {
-            return error.FailedToPutString;
-        }
-        if (c.ncplane_putstr_yx(plane, 3, 0, "└─ subtask 3") < 0) {
-            return error.FailedToPutString;
-        }
-
+        var state = DrawState{};
+        try draw_task_element(plane, task, &state);
         return plane;
     } else {
-        return error.FailedToCreateTetrominoPlane;
+        return error.FailedToCreatePlane;
     }
 }
 
@@ -264,7 +307,44 @@ pub fn main() anyerror!void {
     var dimx: i32 = undefined;
     var stdplane = c.notcurses_stddim_yx(nc, &dimy, &dimx).?;
 
-    var plane = try draw_task_tree_example(stdplane);
+    var second_children = [_]Task{
+        .{
+            .text = "nested subtask 1",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+        .{
+            .text = "nested subtask 2",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+    };
+
+    var first_children = [_]Task{
+        .{
+            .text = "subtask 1",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+
+        .{
+            .text = "subtask 2",
+            .completed = false,
+            .children = &second_children,
+        },
+        .{
+            .text = "subtask 3",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+    };
+    const task = Task{
+        .text = "test task!",
+        .completed = false,
+        .children = &first_children,
+    };
+
+    var plane = try draw_task(stdplane, &task);
     _ = c.notcurses_render(nc);
 
     // our main loop is basically polling for stdin and the signal selfpipe.
