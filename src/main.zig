@@ -70,7 +70,7 @@ const DrawState = struct {
     y_offset: usize = 0,
 };
 
-fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *DrawState) anyerror!void {
+fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *DrawState) anyerror!usize {
     _ = draw_state;
 
     var node_text_buffer: [256]u8 = undefined;
@@ -100,15 +100,20 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
             return error.FailedToPutString;
         }
 
-        const old_draw_state = draw_state.*;
+        var old_draw_state = draw_state.*;
 
         draw_state.x_offset = 1;
         draw_state.y_offset = 1;
         for (task.children) |*child| {
-            try draw_task_element(plane, child, draw_state);
+            const child_children = try draw_task_element(plane, child, draw_state);
+            draw_state.y_offset += child_children + 1;
+            old_draw_state.y_offset += child_children;
         }
+
         draw_state.* = old_draw_state;
     }
+    logger.info("total_children {d}", .{task.children.len});
+    return task.children.len;
 }
 
 fn draw_task(parent_plane: *c.ncplane, task: *const Task) !*c.ncplane {
@@ -126,7 +131,7 @@ fn draw_task(parent_plane: *c.ncplane, task: *const Task) !*c.ncplane {
         const color_return = c.ncplane_set_fg_rgb8(plane, 255, 255, 255);
         if (color_return != 0) return error.FailedToSetColor;
         var state = DrawState{};
-        try draw_task_element(plane, task, &state);
+        _ = try draw_task_element(plane, task, &state);
         return plane;
     } else {
         return error.FailedToCreatePlane;
@@ -307,6 +312,24 @@ pub fn main() anyerror!void {
     var dimx: i32 = undefined;
     var stdplane = c.notcurses_stddim_yx(nc, &dimy, &dimx).?;
 
+    var third_children = [_]Task{
+        .{
+            .text = "doubly nested subtask 1",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+        .{
+            .text = "doubly nested subtask 2",
+            .completed = true,
+            .children = &[_]Task{},
+        },
+        .{
+            .text = "doubly nested subtask 3",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+    };
+
     var second_children = [_]Task{
         .{
             .text = "nested subtask 1",
@@ -316,7 +339,7 @@ pub fn main() anyerror!void {
         .{
             .text = "nested subtask 2",
             .completed = false,
-            .children = &[_]Task{},
+            .children = &third_children,
         },
     };
 
@@ -329,7 +352,7 @@ pub fn main() anyerror!void {
 
         .{
             .text = "subtask 2",
-            .completed = false,
+            .completed = true,
             .children = &second_children,
         },
         .{
