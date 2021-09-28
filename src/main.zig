@@ -68,14 +68,20 @@ const Task = struct {
 const DrawState = struct {
     x_offset: usize = 0,
     y_offset: usize = 0,
+
+    maybe_current_task_child_index: ?usize = null,
+    maybe_current_task_parent_len: ?usize = null,
 };
 
 fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *DrawState) anyerror!usize {
     _ = draw_state;
 
     var node_text_buffer: [256]u8 = undefined;
-    //const tree_prefix = if (idx < task.children.len) "├─" else "└─";
-    const tree_prefix = "p";
+    var tree_prefix = if (draw_state.maybe_current_task_child_index) |index| blk: {
+        const is_end_task = index >= (draw_state.maybe_current_task_parent_len.? - 1);
+        break :blk if (is_end_task) "└─" else "├─";
+    } else "";
+
     const completed_text = if (task.completed) "C" else " ";
     const node_text_full = try std.fmt.bufPrint(&node_text_buffer, "{s}{s}{s}", .{ tree_prefix, completed_text, task.text });
     node_text_buffer[node_text_full.len] = 0;
@@ -104,11 +110,15 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
 
         draw_state.x_offset = 1;
         draw_state.y_offset = 1;
-        for (task.children) |*child| {
+        for (task.children) |*child, idx| {
+            draw_state.maybe_current_task_child_index = idx;
+            draw_state.maybe_current_task_parent_len = task.children.len;
             const child_children = try draw_task_element(plane, child, draw_state);
             draw_state.y_offset += child_children + 1;
             old_draw_state.y_offset += child_children;
         }
+        draw_state.maybe_current_task_child_index = null;
+        draw_state.maybe_current_task_parent_len = null;
 
         draw_state.* = old_draw_state;
     }
