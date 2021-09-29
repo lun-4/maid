@@ -113,8 +113,27 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
         for (task.children) |*child, idx| {
             draw_state.maybe_current_task_child_index = idx;
             draw_state.maybe_current_task_parent_len = task.children.len;
+
+            const old_y = draw_state.y_offset;
             const child_children = try draw_task_element(plane, child, draw_state);
             draw_state.y_offset += child_children + 1;
+            const new_y = draw_state.y_offset;
+            const line_size = new_y - old_y;
+            if (line_size > 1) {
+                var i: usize = old_y;
+                while (i < new_y) : (i += 1) {
+                    if (c.ncplane_putstr_yx(
+                        parent_plane,
+                        @intCast(c_int, i),
+                        @intCast(c_int, draw_state.x_offset),
+                        "│",
+                    ) < 0) {
+                        return error.FailedToDrawConnectingLine;
+                    }
+                }
+            }
+
+            // draw line between children
             old_draw_state.y_offset += child_children;
         }
         draw_state.maybe_current_task_child_index = null;
@@ -348,6 +367,16 @@ pub fn main() anyerror!void {
         },
         .{
             .text = "nested subtask 2",
+            .completed = false,
+            .children = &third_children,
+        },
+        .{
+            .text = "nested subtask 3",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+        .{
+            .text = "nested subtask 4",
             .completed = false,
             .children = &third_children,
         },
