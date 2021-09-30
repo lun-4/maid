@@ -77,8 +77,10 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
     _ = draw_state;
 
     var node_text_buffer: [256]u8 = undefined;
-    var tree_prefix = if (draw_state.maybe_current_task_child_index) |index| blk: {
-        const is_end_task = index >= (draw_state.maybe_current_task_parent_len.? - 1);
+    const maybe_is_end_task: ?bool = if (draw_state.maybe_current_task_child_index) |index| blk: {
+        break :blk index >= (draw_state.maybe_current_task_parent_len.? - 1);
+    } else null;
+    const tree_prefix = if (maybe_is_end_task) |is_end_task| blk: {
         break :blk if (is_end_task) "└─" else "├─";
     } else "";
 
@@ -94,8 +96,8 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
     var nopts = std.mem.zeroes(c.ncplane_options);
     nopts.y = @intCast(c_int, draw_state.y_offset);
     nopts.x = @intCast(c_int, draw_state.x_offset);
-    nopts.rows = 1;
-    nopts.cols = @intCast(c_int, node_text_full_cstr.len);
+    nopts.rows = 100;
+    nopts.cols = @intCast(c_int, node_text_full_cstr.len) + 10;
 
     var maybe_plane = c.ncplane_create(parent_plane, &nopts);
     errdefer {
@@ -113,19 +115,23 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
         for (task.children) |*child, idx| {
             draw_state.maybe_current_task_child_index = idx;
             draw_state.maybe_current_task_parent_len = task.children.len;
+            const is_final_task = idx >= (task.children.len - 1);
 
             const old_y = draw_state.y_offset;
             const child_children = try draw_task_element(plane, child, draw_state);
             draw_state.y_offset += child_children + 1;
             const new_y = draw_state.y_offset;
             const line_size = new_y - old_y;
-            if (line_size > 1) {
+
+            const should_print_vertical_line = !is_final_task;
+
+            if (line_size > 1 and should_print_vertical_line) {
                 var i: usize = old_y;
                 while (i < new_y) : (i += 1) {
                     if (c.ncplane_putstr_yx(
-                        parent_plane,
+                        plane,
                         @intCast(c_int, i),
-                        @intCast(c_int, draw_state.x_offset),
+                        @intCast(c_int, 1),
                         "│",
                     ) < 0) {
                         return error.FailedToDrawConnectingLine;
@@ -141,7 +147,7 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
 
         draw_state.* = old_draw_state;
     }
-    logger.info("total_children {d}", .{task.children.len});
+    logger.info("RET total_children {d}", .{task.children.len});
     return task.children.len;
 }
 
@@ -386,7 +392,7 @@ pub fn main() anyerror!void {
         .{
             .text = "subtask 1",
             .completed = false,
-            .children = &[_]Task{},
+            .children = &third_children,
         },
 
         .{
