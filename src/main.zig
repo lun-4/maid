@@ -26,36 +26,6 @@ pub fn log(
     nosuspend stream.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
 }
 
-fn draw_movable_box(nc: *c.ncplane) !*c.ncplane {
-    var nopts = std.mem.zeroes(c.ncplane_options);
-    nopts.y = 5;
-    nopts.x = 5;
-    nopts.rows = 5;
-    nopts.cols = 5;
-
-    var n_optional = c.ncplane_create(nc, &nopts);
-    errdefer {
-        _ = c.ncplane_destroy(n_optional);
-    }
-    if (n_optional) |plane| {
-        _ = c.ncplane_set_fg_rgb8(plane, 255, 0, 255);
-        var y: i32 = 0;
-
-        while (y < 5) : (y += 1) {
-            var x: i32 = 0;
-            while (x < 5) : (x += 1) {
-                if (c.ncplane_putchar_yx(plane, y, x, 'x') < 0) {
-                    return error.FailedToDraw;
-                }
-            }
-        }
-
-        return plane;
-    } else {
-        return error.FailedToCreateTetrominoPlane;
-    }
-}
-
 const Task = struct {
     // TODO id: u64,
     text: []const u8,
@@ -242,6 +212,8 @@ const MainContext = struct {
 
             const plane_x = c.ncplane_x(plane);
             const plane_y = c.ncplane_y(plane);
+
+            //NCKEY_UP;
 
             if (inp.id == c.NCKEY_RESIZE) {
                 _ = c.notcurses_refresh(self.nc, null, null);
