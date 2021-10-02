@@ -432,6 +432,40 @@ pub fn main() anyerror!void {
             .children = &[_]Task{},
         },
     };
+    var third_children_2 = [_]Task{
+        .{
+            .text = "doubly nested subtask 1",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+        .{
+            .text = "doubly nested subtask 2",
+            .completed = true,
+            .children = &[_]Task{},
+        },
+        .{
+            .text = "doubly nested subtask 3",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+    };
+    var third_children_3 = [_]Task{
+        .{
+            .text = "doubly nested subtask 1",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+        .{
+            .text = "doubly nested subtask 2",
+            .completed = true,
+            .children = &[_]Task{},
+        },
+        .{
+            .text = "doubly nested subtask 3",
+            .completed = false,
+            .children = &[_]Task{},
+        },
+    };
 
     var second_children = [_]Task{
         .{
@@ -452,7 +486,7 @@ pub fn main() anyerror!void {
         .{
             .text = "nested subtask 4",
             .completed = false,
-            .children = &third_children,
+            .children = &third_children_2,
         },
     };
 
@@ -460,7 +494,7 @@ pub fn main() anyerror!void {
         .{
             .text = "subtask 1",
             .completed = false,
-            .children = &third_children,
+            .children = &third_children_3,
         },
 
         .{
