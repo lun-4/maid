@@ -47,8 +47,7 @@ const Task = struct {
         if (!self.tui_state.selected) return error.InvalidTaskTransition;
         const color_return_fg = c.ncplane_set_fg_rgb8(self.tui_state.plane.?, 255, 255, 255);
         if (color_return_fg != 0) return error.FailedToSetColor;
-        const color_return_bg = c.ncplane_set_bg_rgb8(self.tui_state.plane.?, 0, 0, 0);
-        if (color_return_bg != 0) return error.FailedToSetColor;
+        c.ncplane_set_bg_default(self.tui_state.plane.?);
         if (c.ncplane_putstr_yx(self.tui_state.plane.?, 0, 0, &self.tui_state.full_text_cstring) < 0)
             return error.FailedToDrawSelectedTaskText;
 
