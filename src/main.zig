@@ -41,6 +41,30 @@ const Task = struct {
 
     tui_state: TaskTuiState = .{},
 
+    const Self = @This();
+
+    pub fn unselect(self: *Self) !void {
+        if (!self.tui_state.selected) return error.InvalidTaskTransition;
+        const color_return_fg = c.ncplane_set_fg_rgb8(self.tui_state.plane.?, 255, 255, 255);
+        if (color_return_fg != 0) return error.FailedToSetColor;
+        const color_return_bg = c.ncplane_set_bg_rgb8(self.tui_state.plane.?, 0, 0, 0);
+        if (color_return_bg != 0) return error.FailedToSetColor;
+        if (c.ncplane_putstr_yx(self.tui_state.plane.?, 0, 0, &self.tui_state.full_text_cstring) < 0)
+            return error.FailedToDrawSelectedTaskText;
+
+        self.tui_state.selected = false;
+    }
+
+    pub fn select(self: *Self) !void {
+        const color_return_fg = c.ncplane_set_fg_rgb8(self.tui_state.plane.?, 0, 0, 0);
+        if (color_return_fg != 0) return error.FailedToSetColor;
+        const color_return_bg = c.ncplane_set_bg_rgb8(self.tui_state.plane.?, 255, 255, 255);
+        if (color_return_bg != 0) return error.FailedToSetColor;
+        if (c.ncplane_putstr_yx(self.tui_state.plane.?, 0, 0, &self.tui_state.full_text_cstring) < 0)
+            return error.FailedToDrawSelectedTaskText;
+        self.tui_state.selected = true;
+    }
+
     // TODO computed_priority: ?u32 = null,
 };
 
@@ -168,7 +192,7 @@ fn draw_task(parent_plane: *c.ncplane, task: *Task) !*c.ncplane {
 }
 
 const CursorState = struct {
-    selected_plane: ?*c.ncplane = null,
+    selected_task: ?*Task = null,
 };
 
 const Pipe = struct {
@@ -299,22 +323,17 @@ const MainContext = struct {
                 // for now, assume its just selecting the task!
                 // TODO this is going to break when we have multiple tasks
 
-                var maybe_clicked_plane = findClickedPlane(plane, inp.x, inp.y);
-                if (maybe_clicked_plane == null) return;
-                const clicked_plane = maybe_clicked_plane.?;
-                const color_return_fg = c.ncplane_set_fg_rgb8(clicked_plane, 0, 0, 0);
-                if (color_return_fg != 0) return error.FailedToSetColor;
-                const color_return_bg = c.ncplane_set_bg_rgb8(clicked_plane, 255, 255, 255);
-                if (color_return_bg != 0) return error.FailedToSetColor;
-                const clicked_task = taskFromPlane(clicked_plane);
-                if (clicked_task == null) return;
-                logger.info("MATCH! {s}", .{clicked_task.?.tui_state.full_text_cstring});
-                const res =
-                    c.ncplane_putstr_yx(clicked_plane, 0, 0, &clicked_task.?.tui_state.full_text_cstring);
-                if (res < 0) {
-                    logger.warn("got {d}", .{res});
-                    return error.FailedToDrawSelectedTaskText;
+                if (self.cursor_state.selected_task) |current_selected_task| {
+                    try current_selected_task.unselect();
                 }
+
+                var maybe_clicked_plane = findClickedPlane(plane, inp.x, inp.y);
+                if (maybe_clicked_plane) |clicked_plane| {
+                    var clicked_task = taskFromPlane(clicked_plane).?;
+                    try clicked_task.select();
+                    self.cursor_state.selected_task = clicked_task;
+                }
+
                 _ = c.notcurses_render(self.nc);
             } else if (inp.evtype == c.NCTYPE_RELEASE) {
                 //self.cursor_state.plane_drag = false;
