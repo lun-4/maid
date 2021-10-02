@@ -1,3 +1,5 @@
 zig-*
 .zigmod
 deps.zig
+
+maid.log
