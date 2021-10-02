@@ -232,31 +232,31 @@ fn findClickedPlane(plane: *c.ncplane, mouse_x: i32, mouse_y: i32) ?*c.ncplane {
     var rows: c_int = undefined;
     var cols: c_int = undefined;
     c.ncplane_dim_yx(plane, &rows, &cols);
-    logger.info(
+    logger.debug(
         "\tc1 (x={d}) >= (ax={d}) = {}",
         .{ mouse_x, abs_x, mouse_x >= abs_x },
     );
-    logger.info(
+    logger.debug(
         "\tc2 {d} <= {d} = {}",
         .{ mouse_x, abs_x + cols, mouse_x <= (abs_x + cols) },
     );
-    logger.info(
+    logger.debug(
         "\tc1 y={d} >= ay={d} = {}",
         .{ mouse_y, abs_y, mouse_y >= abs_y },
     );
-    logger.info(
+    logger.debug(
         "\tc1 {d} <= {d} = {}",
         .{ mouse_y, abs_y + rows - 1, mouse_y <= (abs_y + rows - 1) },
     );
     const is_inside_plane = (mouse_x >= abs_x and mouse_x <= (abs_x + cols) and mouse_y >= abs_y and mouse_y <= (abs_y + (rows - 1)));
-    logger.info(
+    logger.debug(
         "mx={d} my={d} ax={d} ay={d} cols={d} rows={d} is_inside_plane={}",
         .{ mouse_x, mouse_y, abs_x, abs_y, cols, rows, is_inside_plane },
     );
 
     var task = taskFromPlane(plane);
 
-    logger.info(
+    logger.debug(
         "  in task={s}",
         .{task.?.text},
     );
@@ -303,7 +303,7 @@ const MainContext = struct {
             var inp: c.ncinput = undefined;
             const character = c.notcurses_getc_nblock(self.nc, &inp);
             if (character == 0) break;
-            logger.info("input {}", .{inp});
+            logger.debug("input {}", .{inp});
             if (character == NOTCURSES_U32_ERROR) {
                 logger.err("Error: {s}", .{c.strerror(std.c._errno().*)});
                 return error.FailedToGetInput;
