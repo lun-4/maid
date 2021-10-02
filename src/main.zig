@@ -26,11 +26,20 @@ pub fn log(
     nosuspend stream.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
 }
 
+const TaskTuiState = struct {
+    plane: ?*c.ncplane = null,
+    selected: bool = false,
+
+    full_text_cstring: [256:0]u8 = undefined,
+};
+
 const Task = struct {
     // TODO id: u64,
     text: []const u8,
     completed: bool,
     children: []Task,
+
+    tui_state: TaskTuiState = .{},
 
     // TODO computed_priority: ?u32 = null,
 };
@@ -43,7 +52,7 @@ const DrawState = struct {
     maybe_current_task_parent_len: ?usize = null,
 };
 
-fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *DrawState) anyerror!usize {
+fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawState) anyerror!usize {
     _ = draw_state;
 
     var node_text_buffer: [256]u8 = undefined;
@@ -58,6 +67,7 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
     const node_text_full = try std.fmt.bufPrint(&node_text_buffer, "{s}{s}{s}", .{ tree_prefix, completed_text, task.text });
     node_text_buffer[node_text_full.len] = 0;
     const node_text_full_cstr: [:0]const u8 = node_text_buffer[0..node_text_full.len :0];
+    std.mem.copy(u8, &task.tui_state.full_text_cstring, node_text_full_cstr);
 
     logger.info("{s} state={}", .{ node_text_full, draw_state });
 
@@ -66,7 +76,8 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
     var nopts = std.mem.zeroes(c.ncplane_options);
     nopts.y = @intCast(c_int, draw_state.y_offset);
     nopts.x = @intCast(c_int, draw_state.x_offset);
-    nopts.rows = 100;
+    // TODO set correct rows and cols depending on child total size lol
+    nopts.rows = 30;
     nopts.cols = @intCast(c_int, node_text_full_cstr.len) + 10;
 
     var maybe_plane = c.ncplane_create(parent_plane, &nopts);
@@ -74,6 +85,8 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
         _ = c.ncplane_destroy(maybe_plane);
     }
     if (maybe_plane) |plane| {
+        _ = c.ncplane_set_userptr(plane, task);
+        task.tui_state.plane = plane;
         if (c.ncplane_putstr_yx(plane, 0, 0, node_text_full_cstr) < 0) {
             return error.FailedToPutString;
         }
@@ -121,7 +134,7 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *const Task, draw_state: *D
     return task.children.len;
 }
 
-fn draw_task(parent_plane: *c.ncplane, task: *const Task) !*c.ncplane {
+fn draw_task(parent_plane: *c.ncplane, task: *Task) !*c.ncplane {
     var nopts = std.mem.zeroes(c.ncplane_options);
     nopts.y = 5;
     nopts.x = 5;
@@ -133,6 +146,7 @@ fn draw_task(parent_plane: *c.ncplane, task: *const Task) !*c.ncplane {
         _ = c.ncplane_destroy(maybe_plane);
     }
     if (maybe_plane) |plane| {
+        _ = c.ncplane_set_userptr(plane, task);
         const color_return = c.ncplane_set_fg_rgb8(plane, 255, 255, 255);
         if (color_return != 0) return error.FailedToSetColor;
         var state = DrawState{};
@@ -144,7 +158,7 @@ fn draw_task(parent_plane: *c.ncplane, task: *const Task) !*c.ncplane {
 }
 
 const CursorState = struct {
-    plane_drag: bool = false,
+    selected_plane: ?*c.ncplane = null,
 };
 
 const Pipe = struct {
@@ -173,6 +187,39 @@ fn signal_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_
         };
         self_pipe.writer.writer().writeStruct(signal_data) catch return;
     }
+}
+
+fn taskFromPlane(plane: *c.ncplane) ?*Task {
+    return @ptrCast(?*Task, @alignCast(@alignOf(Task), c.ncplane_userptr(plane)));
+}
+
+fn findClickedPlane(plane: *c.ncplane, mouse_x: i32, mouse_y: i32) ?*c.ncplane {
+    const abs_x = c.ncplane_abs_x(plane);
+    const abs_y = c.ncplane_abs_y(plane);
+    var rows: c_int = undefined;
+    var cols: c_int = undefined;
+    c.ncplane_dim_yx(plane, &rows, &cols);
+
+    const is_inside_plane = (mouse_x >= abs_x and mouse_x <= (abs_x + cols) and mouse_y >= abs_y and mouse_y <= (abs_y + rows));
+
+    var root_task = taskFromPlane(plane);
+    logger.info(
+        "mx={d} my={d} ax={d} ay={d} cols={d} rows={d} is_inside_plane={} root_task={}",
+        .{ mouse_x, mouse_y, abs_x, abs_y, cols, rows, is_inside_plane, root_task },
+    );
+    // this case is for any plane that doesnt have a task, such as the
+    // stdplane!
+    if (root_task == null) return null;
+
+    // optimization: no children, and inside box? boom
+    if (root_task.?.children.len == 0 and is_inside_plane) return plane;
+    // else, go through each one, if neither works, return ourselves
+    for (root_task.?.children) |child| {
+        var child_plane = child.tui_state.plane.?;
+        const possible_matched_plane = findClickedPlane(child_plane, mouse_x, mouse_y);
+        if (possible_matched_plane != null) return possible_matched_plane;
+    }
+    return if (is_inside_plane) plane else null;
 }
 
 const MainContext = struct {
@@ -210,22 +257,52 @@ const MainContext = struct {
                 return error.FailedToGetInput;
             }
 
-            const plane_x = c.ncplane_x(plane);
-            const plane_y = c.ncplane_y(plane);
-
             //NCKEY_UP;
 
             if (inp.id == c.NCKEY_RESIZE) {
                 _ = c.notcurses_refresh(self.nc, null, null);
                 _ = c.notcurses_render(self.nc);
-            } else if (inp.evtype == c.NCTYPE_PRESS and inp.x == plane_x and inp.y == plane_y) {
-                self.cursor_state.plane_drag = true;
-            } else if (inp.evtype == c.NCTYPE_RELEASE) {
-                self.cursor_state.plane_drag = false;
-            } else if (inp.evtype == c.NCTYPE_PRESS and self.cursor_state.plane_drag == true) {
-                _ = c.ncplane_move_yx(plane, inp.y, inp.x);
+            } else if (inp.evtype == c.NCTYPE_PRESS) {
+
+                // we got a press, we don't know if this is drag and drop (moving tasks around)
+                // TODO implement drag and drop!
+                //
+                // for now, assume its just selecting the task!
+                //
+                //  == SLOW BUT CORRECT ALGORITHM
+                //
+                //  generate bounding boxes for all the tasks and see if click matches each one
+                //  if it is in it do that do
+                //
+                //  == FAST ALGORITHM ==
+                //  to do that, we need to go through all the root planes, find out their sizes
+                //  so that we have very low level bounding boxes for the cursor
+                //
+                //  then, for the second pass, go through all the first level childrens' planes,
+                //  their sizes, bounding box, compare against click, etc, etc
+                //
+                //  third pass can be just easy calculatin
+
+                // TODO this is going to break when we have multiple tasks
+
+                var maybe_clicked_plane = findClickedPlane(plane, inp.x, inp.y);
+                if (maybe_clicked_plane == null) return;
+                const clicked_plane = maybe_clicked_plane.?;
+                const color_return_fg = c.ncplane_set_fg_rgb8(clicked_plane, 0, 0, 0);
+                if (color_return_fg != 0) return error.FailedToSetColor;
+                const color_return_bg = c.ncplane_set_bg_rgb8(clicked_plane, 255, 255, 255);
+                if (color_return_bg != 0) return error.FailedToSetColor;
+                const clicked_task = taskFromPlane(clicked_plane);
+                if (clicked_task == null) return;
+                if (c.ncplane_putstr_yx(plane, 0, 0, &clicked_task.?.tui_state.full_text_cstring) < 0) return error.FailedToDrawText;
+                logger.info("MATCH! {s}", .{clicked_task.?.tui_state.full_text_cstring});
                 _ = c.notcurses_render(self.nc);
-            }
+            } else if (inp.evtype == c.NCTYPE_RELEASE) {
+                //self.cursor_state.plane_drag = false;
+            } //else if (inp.evtype == c.NCTYPE_PRESS and self.cursor_state.plane_drag == true) {
+            //  _ = c.ncplane_move_yx(plane, inp.y, inp.x);
+            //  _ = c.notcurses_render(self.nc);
+            //}
         }
     }
 };
@@ -378,7 +455,7 @@ pub fn main() anyerror!void {
             .children = &[_]Task{},
         },
     };
-    const task = Task{
+    var task = Task{
         .text = "test task!",
         .completed = false,
         .children = &first_children,
