@@ -76,8 +76,7 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
     var nopts = std.mem.zeroes(c.ncplane_options);
     nopts.y = @intCast(c_int, draw_state.y_offset);
     nopts.x = @intCast(c_int, draw_state.x_offset);
-    // TODO set correct rows and cols depending on child total size lol
-    nopts.rows = 30;
+    nopts.rows = 1;
     nopts.cols = @intCast(c_int, node_text_full_cstr.len) + 10;
 
     var maybe_plane = c.ncplane_create(parent_plane, &nopts);
@@ -107,17 +106,30 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
             const line_size = new_y - old_y;
 
             const should_print_vertical_line = !is_final_task;
-
             if (line_size > 1 and should_print_vertical_line) {
-                var i: usize = old_y;
-                while (i < new_y) : (i += 1) {
-                    if (c.ncplane_putstr_yx(
-                        plane,
-                        @intCast(c_int, i),
-                        @intCast(c_int, 1),
-                        "│",
-                    ) < 0) {
-                        return error.FailedToDrawConnectingLine;
+                // always draw vertical lines as separate planes from the task plane
+                // so that we don't need to do really bad hacks!
+                var vertical_plane_options = std.mem.zeroes(c.ncplane_options);
+                vertical_plane_options.y = @intCast(c_int, old_y) + 1;
+                vertical_plane_options.x = 1;
+                vertical_plane_options.rows = @intCast(c_int, line_size) - 1;
+                vertical_plane_options.cols = 1;
+                var maybe_vertical_plane = c.ncplane_create(plane, &vertical_plane_options);
+                errdefer {
+                    _ = c.ncplane_destroy(maybe_vertical_plane);
+                }
+                if (maybe_vertical_plane) |vertical_plane| {
+                    var i: usize = 0;
+                    while (i < line_size) : (i += 1) {
+                        logger.info("{d}", .{i});
+                        if (c.ncplane_putstr_yx(
+                            vertical_plane,
+                            @intCast(c_int, i),
+                            @intCast(c_int, 0),
+                            "│",
+                        ) < 0) {
+                            return error.FailedToDrawConnectingLine;
+                        }
                     }
                 }
             }
@@ -268,21 +280,6 @@ const MainContext = struct {
                 // TODO implement drag and drop!
                 //
                 // for now, assume its just selecting the task!
-                //
-                //  == SLOW BUT CORRECT ALGORITHM
-                //
-                //  generate bounding boxes for all the tasks and see if click matches each one
-                //  if it is in it do that do
-                //
-                //  == FAST ALGORITHM ==
-                //  to do that, we need to go through all the root planes, find out their sizes
-                //  so that we have very low level bounding boxes for the cursor
-                //
-                //  then, for the second pass, go through all the first level childrens' planes,
-                //  their sizes, bounding box, compare against click, etc, etc
-                //
-                //  third pass can be just easy calculatin
-
                 // TODO this is going to break when we have multiple tasks
 
                 var maybe_clicked_plane = findClickedPlane(plane, inp.x, inp.y);
