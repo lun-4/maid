@@ -199,7 +199,7 @@ fn signal_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_
     }
 }
 
-fn taskFromPlane(plane: *c.ncplane) ?*Task {
+inline fn taskFromPlane(plane: *c.ncplane) ?*Task {
     return @ptrCast(?*Task, @alignCast(@alignOf(Task), c.ncplane_userptr(plane)));
 }
 
