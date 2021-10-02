@@ -53,8 +53,6 @@ const DrawState = struct {
 };
 
 fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawState) anyerror!usize {
-    _ = draw_state;
-
     var node_text_buffer: [256]u8 = undefined;
     const maybe_is_end_task: ?bool = if (draw_state.maybe_current_task_child_index) |index| blk: {
         break :blk index >= (draw_state.maybe_current_task_parent_len.? - 1);
@@ -77,7 +75,7 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
     nopts.y = @intCast(c_int, draw_state.y_offset);
     nopts.x = @intCast(c_int, draw_state.x_offset);
     nopts.rows = 1;
-    nopts.cols = @intCast(c_int, node_text_full_cstr.len) + 10;
+    nopts.cols = @intCast(c_int, node_text_full_cstr.len);
 
     var maybe_plane = c.ncplane_create(parent_plane, &nopts);
     errdefer {
@@ -150,8 +148,8 @@ fn draw_task(parent_plane: *c.ncplane, task: *Task) !*c.ncplane {
     var nopts = std.mem.zeroes(c.ncplane_options);
     nopts.y = 5;
     nopts.x = 5;
-    nopts.rows = 30;
-    nopts.cols = 30;
+    nopts.rows = 1;
+    nopts.cols = 1;
 
     var maybe_plane = c.ncplane_create(parent_plane, &nopts);
     errdefer {
@@ -211,27 +209,46 @@ fn findClickedPlane(plane: *c.ncplane, mouse_x: i32, mouse_y: i32) ?*c.ncplane {
     var rows: c_int = undefined;
     var cols: c_int = undefined;
     c.ncplane_dim_yx(plane, &rows, &cols);
-
-    const is_inside_plane = (mouse_x >= abs_x and mouse_x <= (abs_x + cols) and mouse_y >= abs_y and mouse_y <= (abs_y + rows));
-
-    var root_task = taskFromPlane(plane);
     logger.info(
-        "mx={d} my={d} ax={d} ay={d} cols={d} rows={d} is_inside_plane={} root_task={}",
-        .{ mouse_x, mouse_y, abs_x, abs_y, cols, rows, is_inside_plane, root_task },
+        "\tc1 (x={d}) >= (ax={d}) = {}",
+        .{ mouse_x, abs_x, mouse_x >= abs_x },
     );
-    // this case is for any plane that doesnt have a task, such as the
-    // stdplane!
-    if (root_task == null) return null;
+    logger.info(
+        "\tc2 {d} <= {d} = {}",
+        .{ mouse_x, abs_x + cols, mouse_x <= (abs_x + cols) },
+    );
+    logger.info(
+        "\tc1 y={d} >= ay={d} = {}",
+        .{ mouse_y, abs_y, mouse_y >= abs_y },
+    );
+    logger.info(
+        "\tc1 {d} <= {d} = {}",
+        .{ mouse_y, abs_y + rows - 1, mouse_y <= (abs_y + rows - 1) },
+    );
+    const is_inside_plane = (mouse_x >= abs_x and mouse_x <= (abs_x + cols) and mouse_y >= abs_y and mouse_y <= (abs_y + (rows - 1)));
+    logger.info(
+        "mx={d} my={d} ax={d} ay={d} cols={d} rows={d} is_inside_plane={}",
+        .{ mouse_x, mouse_y, abs_x, abs_y, cols, rows, is_inside_plane },
+    );
 
-    // optimization: no children, and inside box? boom
-    if (root_task.?.children.len == 0 and is_inside_plane) return plane;
-    // else, go through each one, if neither works, return ourselves
-    for (root_task.?.children) |child| {
+    var task = taskFromPlane(plane);
+
+    logger.info(
+        "  in task={s}",
+        .{task.?.text},
+    );
+
+    if (is_inside_plane) {
+        return plane;
+    }
+
+    for (task.?.children) |child| {
         var child_plane = child.tui_state.plane.?;
         const possible_matched_plane = findClickedPlane(child_plane, mouse_x, mouse_y);
         if (possible_matched_plane != null) return possible_matched_plane;
     }
-    return if (is_inside_plane) plane else null;
+
+    return null;
 }
 
 const MainContext = struct {
@@ -291,8 +308,13 @@ const MainContext = struct {
                 if (color_return_bg != 0) return error.FailedToSetColor;
                 const clicked_task = taskFromPlane(clicked_plane);
                 if (clicked_task == null) return;
-                if (c.ncplane_putstr_yx(plane, 0, 0, &clicked_task.?.tui_state.full_text_cstring) < 0) return error.FailedToDrawText;
                 logger.info("MATCH! {s}", .{clicked_task.?.tui_state.full_text_cstring});
+                const res =
+                    c.ncplane_putstr_yx(clicked_plane, 0, 0, &clicked_task.?.tui_state.full_text_cstring);
+                if (res < 0) {
+                    logger.warn("got {d}", .{res});
+                    return error.FailedToDrawSelectedTaskText;
+                }
                 _ = c.notcurses_render(self.nc);
             } else if (inp.evtype == c.NCTYPE_RELEASE) {
                 //self.cursor_state.plane_drag = false;
