@@ -356,6 +356,23 @@ const MainContext = struct {
                 }
             } else if (inp.id == c.NCKEY_DOWN) {
                 logger.debug("go down", .{});
+
+                if (self.cursor_state.selected_task) |current_selected_task| {
+                    try current_selected_task.unselect();
+                    self.cursor_state.selected_task = null;
+
+                    const maybe_next_task = current_selected_task.tui_state.next_task;
+                    if (maybe_next_task) |next_task| {
+                        logger.debug("going down {}", .{next_task});
+                        try next_task.select();
+                        self.cursor_state.selected_task = next_task;
+                    } else {
+                        // i'm at the root task, and so, we can't do much without multiple tree support
+                        logger.debug("top level tree, where to go?", .{});
+                    }
+
+                    _ = c.notcurses_render(self.nc);
+                }
             } else if (inp.evtype == c.NCTYPE_PRESS and inp.id == c.NCKEY_BUTTON1) {
 
                 // we got a press, we don't know if this is drag and drop (moving tasks around)
