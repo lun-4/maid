@@ -409,6 +409,7 @@ const MainContext = struct {
 
                 if (self.cursor_state.selected_task) |current_selected_task| {
                     try current_selected_task.unselect();
+                    self.cursor_state.selected_task = null;
                 }
 
                 var maybe_clicked_plane = findClickedPlane(plane, inp.x, inp.y);
