@@ -34,6 +34,21 @@ const TaskTuiState = struct {
     // important for scrolling up or down w/ arrow keys
     previous_task: ?*Task = null,
     next_task: ?*Task = null,
+
+    const Self = @This();
+
+    pub fn format(self: Self, comptime f: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = options;
+        if (f.len != 0) {
+            @compileError("Unknown format character: '" ++ f ++ "'");
+        }
+
+        return std.fmt.format(
+            writer,
+            "TaskTuiState{{ .full_text_cstring = {s} }}",
+            .{self.full_text_cstring},
+        );
+    }
 };
 
 const Task = struct {
@@ -95,7 +110,7 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
     const node_text_full_cstr: [:0]const u8 = node_text_buffer[0..node_text_full.len :0];
     std.mem.copy(u8, &task.tui_state.full_text_cstring, node_text_full_cstr);
 
-    logger.info("{s} state={}", .{ node_text_full, draw_state });
+    logger.debug("{s} state={}", .{ node_text_full, draw_state });
 
     // now that we know what we're going to draw, we can create the ncplane
 
@@ -244,34 +259,34 @@ fn findClickedPlane(plane: *c.ncplane, mouse_x: i32, mouse_y: i32) ?*c.ncplane {
     var rows: c_int = undefined;
     var cols: c_int = undefined;
     c.ncplane_dim_yx(plane, &rows, &cols);
-    logger.debug(
-        "\tc1 (x={d}) >= (ax={d}) = {}",
-        .{ mouse_x, abs_x, mouse_x >= abs_x },
-    );
-    logger.debug(
-        "\tc2 {d} <= {d} = {}",
-        .{ mouse_x, abs_x + cols, mouse_x <= (abs_x + cols) },
-    );
-    logger.debug(
-        "\tc1 y={d} >= ay={d} = {}",
-        .{ mouse_y, abs_y, mouse_y >= abs_y },
-    );
-    logger.debug(
-        "\tc1 {d} <= {d} = {}",
-        .{ mouse_y, abs_y + rows - 1, mouse_y <= (abs_y + rows - 1) },
-    );
+    //logger.debug(
+    //    "\tc1 (x={d}) >= (ax={d}) = {}",
+    //    .{ mouse_x, abs_x, mouse_x >= abs_x },
+    //);
+    //logger.debug(
+    //    "\tc2 {d} <= {d} = {}",
+    //    .{ mouse_x, abs_x + cols, mouse_x <= (abs_x + cols) },
+    //);
+    //logger.debug(
+    //    "\tc1 y={d} >= ay={d} = {}",
+    //    .{ mouse_y, abs_y, mouse_y >= abs_y },
+    //);
+    //logger.debug(
+    //    "\tc1 {d} <= {d} = {}",
+    //    .{ mouse_y, abs_y + rows - 1, mouse_y <= (abs_y + rows - 1) },
+    //);
     const is_inside_plane = (mouse_x >= abs_x and mouse_x <= (abs_x + cols) and mouse_y >= abs_y and mouse_y <= (abs_y + (rows - 1)));
-    logger.debug(
-        "mx={d} my={d} ax={d} ay={d} cols={d} rows={d} is_inside_plane={}",
-        .{ mouse_x, mouse_y, abs_x, abs_y, cols, rows, is_inside_plane },
-    );
+    //logger.debug(
+    //    "mx={d} my={d} ax={d} ay={d} cols={d} rows={d} is_inside_plane={}",
+    //    .{ mouse_x, mouse_y, abs_x, abs_y, cols, rows, is_inside_plane },
+    //);
 
     var task = taskFromPlane(plane);
 
-    logger.debug(
-        "  in task={s}",
-        .{task.?.text},
-    );
+    //logger.debug(
+    //    "  in task={s}",
+    //    .{task.?.text},
+    //);
 
     if (is_inside_plane) {
         return plane;
@@ -367,8 +382,8 @@ const MainContext = struct {
                         try next_task.select();
                         self.cursor_state.selected_task = next_task;
                     } else {
-                        // i'm at the root task, and so, we can't do much without multiple tree support
-                        logger.debug("top level tree, where to go?", .{});
+                        // i'm at the last task, and so, we can't do much without multiple tree support
+                        logger.debug("end of tree, where to go?", .{});
                     }
 
                     _ = c.notcurses_render(self.nc);
