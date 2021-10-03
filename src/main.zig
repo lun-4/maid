@@ -29,8 +29,11 @@ pub fn log(
 const TaskTuiState = struct {
     plane: ?*c.ncplane = null,
     selected: bool = false,
-
     full_text_cstring: [256:0]u8 = undefined,
+
+    // important for scrolling up or down w/ arrow keys
+    previous_task: ?*Task = null,
+    next_task: ?*Task = null,
 };
 
 const Task = struct {
@@ -73,6 +76,8 @@ const DrawState = struct {
 
     maybe_current_task_child_index: ?usize = null,
     maybe_current_task_parent_len: ?usize = null,
+
+    maybe_previous_task: ?*Task = null,
 };
 
 fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawState) anyerror!usize {
@@ -112,6 +117,13 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
         }
 
         var old_draw_state = draw_state.*;
+
+        if (draw_state.maybe_previous_task) |previous_task| {
+            task.tui_state.previous_task = previous_task;
+            previous_task.tui_state.next_task = task;
+        }
+        draw_state.maybe_previous_task = task;
+        old_draw_state.maybe_previous_task = task;
 
         draw_state.x_offset = 1;
         draw_state.y_offset = 1;
@@ -324,6 +336,26 @@ const MainContext = struct {
                 } else {
                     // TODO safely exit here
                 }
+            } else if (inp.id == c.NCKEY_UP) {
+                logger.debug("go up", .{});
+                if (self.cursor_state.selected_task) |current_selected_task| {
+                    try current_selected_task.unselect();
+                    self.cursor_state.selected_task = null;
+
+                    const maybe_previous_task = current_selected_task.tui_state.previous_task;
+                    if (maybe_previous_task) |previous_task| {
+                        logger.debug("going up {}", .{previous_task});
+                        try previous_task.select();
+                        self.cursor_state.selected_task = previous_task;
+                    } else {
+                        // i'm at the root task, and so, we can't do much without multiple tree support
+                        logger.debug("top level tree, where to go?", .{});
+                    }
+
+                    _ = c.notcurses_render(self.nc);
+                }
+            } else if (inp.id == c.NCKEY_DOWN) {
+                logger.debug("go down", .{});
             } else if (inp.evtype == c.NCTYPE_PRESS and inp.id == c.NCKEY_BUTTON1) {
 
                 // we got a press, we don't know if this is drag and drop (moving tasks around)
