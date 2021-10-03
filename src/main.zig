@@ -314,7 +314,17 @@ const MainContext = struct {
             if (inp.id == c.NCKEY_RESIZE) {
                 _ = c.notcurses_refresh(self.nc, null, null);
                 _ = c.notcurses_render(self.nc);
-            } else if (inp.evtype == c.NCTYPE_PRESS) {
+            } else if (inp.id == c.NCKEY_ESC) {
+                // if task is selected, unselect it, if not, exit program
+                if (self.cursor_state.selected_task) |current_selected_task| {
+                    logger.debug("unselecting task", .{});
+                    try current_selected_task.unselect();
+                    self.cursor_state.selected_task = null;
+                    _ = c.notcurses_render(self.nc);
+                } else {
+                    // TODO safely exit here
+                }
+            } else if (inp.evtype == c.NCTYPE_PRESS and inp.id == c.NCKEY_BUTTON1) {
 
                 // we got a press, we don't know if this is drag and drop (moving tasks around)
                 // TODO implement drag and drop!
