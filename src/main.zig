@@ -91,11 +91,18 @@ const DrawState = struct {
 
     maybe_current_task_child_index: ?usize = null,
     maybe_current_task_parent_len: ?usize = null,
+};
 
+const SharedDrawState = struct {
     maybe_previous_task: ?*Task = null,
 };
 
-fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawState) anyerror!usize {
+fn draw_task_element(
+    parent_plane: *c.ncplane,
+    task: *Task,
+    draw_state: *DrawState,
+    shared_draw_state: *SharedDrawState,
+) anyerror!usize {
     var node_text_buffer: [256]u8 = undefined;
     const maybe_is_end_task: ?bool = if (draw_state.maybe_current_task_child_index) |index| blk: {
         break :blk index >= (draw_state.maybe_current_task_parent_len.? - 1);
@@ -133,12 +140,17 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
 
         var old_draw_state = draw_state.*;
 
-        if (draw_state.maybe_previous_task) |previous_task| {
+        if (shared_draw_state.maybe_previous_task) |previous_task| {
             task.tui_state.previous_task = previous_task;
             previous_task.tui_state.next_task = task;
         }
-        draw_state.maybe_previous_task = task;
-        old_draw_state.maybe_previous_task = task;
+        shared_draw_state.maybe_previous_task = task;
+
+        logger.debug("task {s} PREV {s} NEXT {s}", .{
+            task.text,
+            @as(?[]const u8, if (task.tui_state.previous_task) |previous_task| previous_task.text else null),
+            @as(?[]const u8, if (task.tui_state.next_task) |next_task| next_task.text else null),
+        });
 
         draw_state.x_offset = 1;
         draw_state.y_offset = 1;
@@ -148,7 +160,7 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
             const is_final_task = idx >= (task.children.len - 1);
 
             const old_y = draw_state.y_offset;
-            const child_children = try draw_task_element(plane, child, draw_state);
+            const child_children = try draw_task_element(plane, child, draw_state, shared_draw_state);
             draw_state.y_offset += child_children + 1;
             const new_y = draw_state.y_offset;
             const line_size = new_y - old_y;
@@ -169,7 +181,6 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
                 if (maybe_vertical_plane) |vertical_plane| {
                     var i: usize = 0;
                     while (i < line_size) : (i += 1) {
-                        logger.info("{d}", .{i});
                         if (c.ncplane_putstr_yx(
                             vertical_plane,
                             @intCast(c_int, i),
@@ -190,7 +201,6 @@ fn draw_task_element(parent_plane: *c.ncplane, task: *Task, draw_state: *DrawSta
 
         draw_state.* = old_draw_state;
     }
-    logger.info("RET total_children {d}", .{task.children.len});
     return task.children.len;
 }
 
@@ -210,7 +220,8 @@ fn draw_task(parent_plane: *c.ncplane, task: *Task) !*c.ncplane {
         const color_return = c.ncplane_set_fg_rgb8(plane, 255, 255, 255);
         if (color_return != 0) return error.FailedToSetColor;
         var state = DrawState{};
-        _ = try draw_task_element(plane, task, &state);
+        var shared_draw_state = SharedDrawState{};
+        _ = try draw_task_element(plane, task, &state, &shared_draw_state);
         return plane;
     } else {
         return error.FailedToCreatePlane;
