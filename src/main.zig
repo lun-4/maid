@@ -318,7 +318,7 @@ const MainContext = struct {
     cursor_state: CursorState = .{},
     const Self = @This();
 
-    fn processNewSignals(self: Self) !void {
+    fn processNewSignals(self: *Self, plane: *c.ncplane) !void {
         _ = self;
 
         while (true) {
@@ -328,6 +328,9 @@ const MainContext = struct {
             };
             if (signal_data.signal == std.os.SIG.SEGV) {
                 zig_segfault_handler(signal_data.signal, &signal_data.info, signal_data.uctx);
+            } else if (signal_data.signal == std.os.SIG.URG or signal_data.signal == std.os.SIG.IO) {
+                // we have data on stdin!
+                try self.processTerminalEvents(plane);
             } else {
                 logger.info("exiting! with signal {d}", .{signal_data.signal});
                 // TODO shutdown db, when we have one
@@ -486,6 +489,8 @@ pub fn main() anyerror!void {
     // only linux and darwin implement sigaddset() on zig stdlib. huh.
     std.os.linux.sigaddset(&mask, std.os.SIG.TERM);
     std.os.linux.sigaddset(&mask, std.os.SIG.INT);
+    std.os.linux.sigaddset(&mask, std.os.SIG.URG);
+    std.os.linux.sigaddset(&mask, std.os.SIG.IO);
     var sa = std.os.Sigaction{
         .handler = .{ .sigaction = signal_handler },
         .mask = mask,
@@ -499,6 +504,8 @@ pub fn main() anyerror!void {
     zig_segfault_handler = old_sa.handler.sigaction.?;
     std.os.sigaction(std.os.SIG.TERM, &sa, null);
     std.os.sigaction(std.os.SIG.INT, &sa, null);
+    std.os.sigaction(std.os.SIG.URG, &sa, null);
+    std.os.sigaction(std.os.SIG.IO, &sa, null);
 
     std.log.info("boot!", .{});
     var nopts = std.mem.zeroes(c.notcurses_options);
@@ -636,11 +643,13 @@ pub fn main() anyerror!void {
 
     const stdin_fd = std.io.getStdIn().handle;
 
-    try sockets.append(std.os.pollfd{
-        .fd = stdin_fd,
-        .events = std.os.POLL.IN,
-        .revents = 0,
-    });
+    //try sockets.append(std.os.pollfd{
+    //    .fd = stdin_fd,
+    //    .events = std.os.POLL.IN,
+    //    .revents = 0,
+    //});
+    _ = try std.os.fcntl(stdin_fd, std.os.F.SETFL, std.os.O.ASYNC);
+    _ = try std.os.fcntl(stdin_fd, std.os.F.SETOWN, @intCast(usize, std.os.linux.getpid()));
     try sockets.append(std.os.pollfd{
         .fd = maybe_self_pipe.?.reader.handle,
         .events = std.os.POLL.IN,
@@ -656,18 +665,19 @@ pub fn main() anyerror!void {
         const available = try std.os.poll(sockets.items, -1);
         try std.testing.expect(available > 0);
         for (sockets.items) |pollfd| {
+            logger.info("fd {d} has revents {d}", .{ pollfd.fd, pollfd.revents });
             if (pollfd.revents == 0) continue;
 
             // signals have higher priority, as if we got a SIGTERM,
             // notcurses WILL have destroyed its context and resetted the
             // terminal to a good state, which means we must not render shit.
             if (pollfd.fd == maybe_self_pipe.?.reader.handle) {
-                try ctx.processNewSignals();
+                try ctx.processNewSignals(plane);
             }
 
-            if (pollfd.fd == stdin_fd) {
-                try ctx.processTerminalEvents(plane);
-            }
+            //if (pollfd.fd == stdin_fd) {
+            //    try ctx.processTerminalEvents(plane);
+            //}
         }
     }
 }
