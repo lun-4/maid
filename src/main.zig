@@ -28,6 +28,12 @@ pub fn log(
     nosuspend stream.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
 }
 
+const ParentTaskInfo = struct {
+    parent_task: *Task,
+    child_index: usize,
+    parent_child_len: usize,
+};
+
 const TaskTuiState = struct {
     plane: ?*c.ncplane = null,
     selected: bool = false,
@@ -36,6 +42,8 @@ const TaskTuiState = struct {
     // important for scrolling up or down w/ arrow keys
     previous_task: ?*Task = null,
     next_task: ?*Task = null,
+
+    parent_info: ?ParentTaskInfo = null,
 
     const Self = @This();
 
@@ -96,6 +104,7 @@ const DrawState = struct {
 
 const SharedDrawState = struct {
     maybe_previous_task: ?*Task = null,
+    maybe_parent_task: ?*Task = null,
 };
 
 fn draw_task_element(
@@ -103,6 +112,7 @@ fn draw_task_element(
     task: *Task,
     draw_state: *DrawState,
     shared_draw_state: *SharedDrawState,
+    parent_info: ?ParentTaskInfo,
 ) anyerror!usize {
     var node_text_buffer: [256]u8 = undefined;
     const maybe_is_end_task: ?bool = if (draw_state.maybe_current_task_child_index) |index| blk: {
@@ -135,6 +145,7 @@ fn draw_task_element(
     if (maybe_plane) |plane| {
         _ = c.ncplane_set_userptr(plane, task);
         task.tui_state.plane = plane;
+        task.tui_state.parent_info = parent_info;
         if (c.ncplane_putstr_yx(plane, 0, 0, node_text_full_cstr) < 0) {
             return error.FailedToPutString;
         }
@@ -161,7 +172,11 @@ fn draw_task_element(
             const is_final_task = idx >= (task.children.len - 1);
 
             const old_y = draw_state.y_offset;
-            const child_children = try draw_task_element(plane, child, draw_state, shared_draw_state);
+            const child_children = try draw_task_element(plane, child, draw_state, shared_draw_state, ParentTaskInfo{
+                .parent_task = task,
+                .child_index = idx,
+                .parent_child_len = task.children.len,
+            });
             draw_state.y_offset += child_children + 1;
             const new_y = draw_state.y_offset;
             const line_size = new_y - old_y;
@@ -222,7 +237,7 @@ fn draw_task(parent_plane: *c.ncplane, task: *Task) !*c.ncplane {
         if (color_return != 0) return error.FailedToSetColor;
         var state = DrawState{};
         var shared_draw_state = SharedDrawState{};
-        _ = try draw_task_element(plane, task, &state, &shared_draw_state);
+        _ = try draw_task_element(plane, task, &state, &shared_draw_state, null);
         return plane;
     } else {
         return error.FailedToCreatePlane;
