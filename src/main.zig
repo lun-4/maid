@@ -418,6 +418,28 @@ const MainContext = struct {
 
                     _ = c.notcurses_render(self.nc);
                 }
+            } else if (inp.id == c.NCKEY_ENTER) {
+                logger.debug("task: {}", .{self.cursor_state});
+                if (self.cursor_state.selected_task) |selected_task| {
+                    // we pressed enter:
+                    // - unselect current task
+                    // - TODO create new task at index+1
+                    //   - TODO if root of tree, add to len+1
+                    // - TODO redraw task tree
+                    // - TODO render screen
+                    // - TODO select new task
+                    try selected_task.unselect();
+                    self.cursor_state.selected_task = null;
+
+                    const maybe_parent_info = selected_task.tui_state.parent_info;
+                    if (maybe_parent_info) |parent_info| {
+                        _ = parent_info;
+                        // realloc...? fuck.
+                    } else {
+                        // we are the root of the tree, create a task at the end of it
+                    }
+                    _ = c.notcurses_render(self.nc);
+                }
             } else if (inp.evtype == c.NCTYPE_PRESS and inp.id == c.NCKEY_BUTTON1) {
 
                 // we got a press, we don't know if this is drag and drop (moving tasks around)
