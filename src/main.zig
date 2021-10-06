@@ -20,6 +20,8 @@ pub fn log(
     const level_txt = comptime message_level.asText();
     const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
     // if no logfile, prefer stderr
+    //
+    // TODO buffered writer!
     const stream = if (logfile_optional) |logfile| logfile.writer() else std.io.getStdErr().writer();
     const held = std.debug.getStderrMutex().acquire();
     defer held.release();
@@ -63,8 +65,7 @@ const Task = struct {
 
     pub fn unselect(self: *Self) !void {
         if (!self.tui_state.selected) return error.InvalidTaskTransition;
-        const color_return_fg = c.ncplane_set_fg_rgb8(self.tui_state.plane.?, 255, 255, 255);
-        if (color_return_fg != 0) return error.FailedToSetColor;
+        c.ncplane_set_fg_default(self.tui_state.plane.?);
         c.ncplane_set_bg_default(self.tui_state.plane.?);
         if (c.ncplane_putstr_yx(self.tui_state.plane.?, 0, 0, &self.tui_state.full_text_cstring) < 0)
             return error.FailedToDrawSelectedTaskText;
