@@ -429,8 +429,8 @@ const MainContext = struct {
                     // - unselect current task
                     // - create new task at index+1
                     //   - TODO if root of tree, add to len+1
-                    // - TODO redraw task tree
-                    // - TODO render screen
+                    // - redraw task tree
+                    // - render screen
                     // - TODO select new task
                     try selected_task.unselect();
                     self.cursor_state.selected_task = null;
@@ -445,8 +445,9 @@ const MainContext = struct {
                             .children = new_task_list,
                         };
                         try new_task.select();
-                        self.cursor_state.current_selected_task = new_task;
                         try parent_info.parent_task.children.insert(parent_info.child_index + 1, new_task);
+                        var new_task_as_ptr = &parent_info.parent_task.children.items[parent_info.parent_task.children.items.len - 1];
+                        self.cursor_state.selected_task = new_task_as_ptr;
 
                         // redraw task tree!
                         // HOW DO I REDRAW THE TASK TREE
