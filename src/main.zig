@@ -422,6 +422,10 @@ const MainContext = struct {
 
                     _ = c.notcurses_render(self.nc);
                 }
+            } else if (inp.id == 'L' and inp.ctrl) {
+                logger.info("hard redraw", .{});
+                _ = c.notcurses_refresh(self.nc, null, null);
+                _ = c.notcurses_render(self.nc);
             } else if (inp.id == c.NCKEY_ENTER) {
                 logger.debug("task: {}", .{self.cursor_state});
                 if (self.cursor_state.selected_task) |selected_task| {
