@@ -273,7 +273,11 @@ const SignalData = extern struct {
 };
 const SignalList = std.ArrayList(SignalData);
 
-fn signal_handler(signal: c_int, info: *const std.os.siginfo_t, uctx: ?*const c_void) callconv(.C) void {
+fn signal_handler(
+    signal: c_int,
+    info: *const std.os.siginfo_t,
+    uctx: ?*const c_void,
+) callconv(.C) void {
     if (maybe_self_pipe) |self_pipe| {
         const signal_data = SignalData{
             .signal = signal,
@@ -336,6 +340,19 @@ fn findClickedPlane(plane: *c.ncplane, mouse_x: i32, mouse_y: i32) ?*c.ncplane {
     return null;
 }
 
+fn findRootTask(task: *Task) *Task {
+    var root_task: ?*Task = null;
+    var current_task: *Task = task;
+    while (true) {
+        if (current_task.tui_state.parent_info == null) {
+            root_task = current_task;
+            break;
+        }
+        current_task = current_task.tui_state.parent_info.?.parent_task;
+    }
+    return root_task.?; // must not be null
+}
+
 const MainContext = struct {
     allocator: *std.mem.Allocator,
     nc: *c.notcurses,
@@ -363,6 +380,15 @@ const MainContext = struct {
                 std.os.exit(1);
             }
         }
+    }
+
+    fn recreateTreePlane(self: *Self, root_task: *Task) !void {
+        // TODO task tree should be aware of vertical lines
+        // for a fully working destroy
+        try destroy_task_tree(root_task);
+        if (c.notcurses_render(self.nc) < 0) return error.FailedToRender;
+        var new_root_plane = try draw_task(self.standard_plane, root_task);
+        self.root_task_plane = new_root_plane;
     }
 
     fn processTerminalEvents(self: *Self, plane: *c.ncplane) !void {
@@ -433,15 +459,7 @@ const MainContext = struct {
                 _ = c.notcurses_refresh(self.nc, null, null);
                 _ = c.notcurses_render(self.nc);
             } else if (inp.id == c.NCKEY_ENTER) {
-                logger.debug("task: {}", .{self.cursor_state});
                 if (self.cursor_state.selected_task) |selected_task| {
-                    // we pressed enter:
-                    // - unselect current task
-                    // - create new task at index+1
-                    //   - TODO if root of tree, add to len+1
-                    // - redraw task tree
-                    // - render screen
-                    // - TODO select new task
                     try selected_task.unselect();
                     self.cursor_state.selected_task = null;
 
@@ -458,33 +476,38 @@ const MainContext = struct {
                         const new_task_child_index = parent_info.child_index + 1;
                         try parent_info.parent_task.children.insert(new_task_child_index, new_task);
 
-                        // walk backward in the tree until we find
-                        // task without parent info. that task is the root one
-                        //
-                        // use it to redraw whole tree
-                        var root_task: *Task = undefined;
-                        var current_task: *Task = selected_task;
-                        while (true) {
-                            logger.info("current_task = {}", .{current_task});
-                            if (current_task.tui_state.parent_info == null) {
-                                root_task = current_task;
-                                break;
-                            }
-                            current_task = current_task.tui_state.parent_info.?.parent_task;
-                        }
-                        // TODO task tree should be aware of vertical lines
-                        // for a fully working destroy
-                        try destroy_task_tree(root_task);
-                        if (c.notcurses_render(self.nc) < 0) return error.FailedToRender;
-                        var new_root_plane = try draw_task(self.standard_plane, root_task);
-                        self.root_task_plane = new_root_plane;
+                        var root_task = findRootTask(selected_task);
+                        try self.recreateTreePlane(root_task);
 
                         var new_task_as_ptr = &parent_info.parent_task.children.items[new_task_child_index];
                         try new_task_as_ptr.select();
                         self.cursor_state.selected_task = new_task_as_ptr;
                     } else {
-                        // we are the root of the tree, create a task at the end of it
+                        // TODO we are the root of the tree, create a task at the end of it
                     }
+                    _ = c.notcurses_render(self.nc);
+                }
+            } else if (inp.id == '\t') {
+                if (self.cursor_state.selected_task) |selected_task| {
+                    try selected_task.unselect();
+                    self.cursor_state.selected_task = null;
+
+                    var new_task_list = TaskList.init(self.allocator);
+                    var new_task = Task{
+                        .text = "",
+                        .completed = false,
+                        .children = new_task_list,
+                    };
+
+                    try selected_task.children.insert(selected_task.children.items.len, new_task);
+
+                    var root_task = findRootTask(selected_task);
+                    try self.recreateTreePlane(root_task);
+
+                    var new_task_as_ptr = &selected_task.children.items[selected_task.children.items.len - 1];
+                    try new_task_as_ptr.select();
+                    self.cursor_state.selected_task = new_task_as_ptr;
+
                     _ = c.notcurses_render(self.nc);
                 }
             } else if (inp.evtype == c.NCTYPE_PRESS and inp.id == c.NCKEY_BUTTON1) {
