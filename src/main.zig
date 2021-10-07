@@ -67,7 +67,7 @@ const Task = struct {
     // TODO id: u64,
     text: []const u8,
     completed: bool,
-    children: *TaskList,
+    children: TaskList,
 
     tui_state: TaskTuiState = .{},
 
@@ -573,17 +573,17 @@ pub fn main() anyerror!void {
         .{
             .text = "doubly nested subtask 1",
             .completed = false,
-            .children = &empty_children,
+            .children = empty_children,
         },
         .{
             .text = "doubly nested subtask 2",
             .completed = true,
-            .children = &empty_children,
+            .children = empty_children,
         },
         .{
             .text = "doubly nested subtask 3",
             .completed = false,
-            .children = &empty_children,
+            .children = empty_children,
         },
     };
 
@@ -605,22 +605,22 @@ pub fn main() anyerror!void {
         .{
             .text = "nested subtask 1",
             .completed = false,
-            .children = &empty_children,
+            .children = empty_children,
         },
         .{
             .text = "nested subtask 2",
             .completed = false,
-            .children = &third_children,
+            .children = third_children,
         },
         .{
             .text = "nested subtask 3",
             .completed = false,
-            .children = &empty_children,
+            .children = empty_children,
         },
         .{
             .text = "nested subtask 4",
             .completed = false,
-            .children = &third_children_2,
+            .children = third_children_2,
         },
     });
 
@@ -630,24 +630,24 @@ pub fn main() anyerror!void {
         .{
             .text = "subtask 1",
             .completed = false,
-            .children = &third_children_3,
+            .children = third_children_3,
         },
         .{
             .text = "subtask 2",
             .completed = true,
-            .children = &second_children,
+            .children = second_children,
         },
         .{
             .text = "subtask 3",
             .completed = false,
-            .children = &empty_children,
+            .children = empty_children,
         },
     });
 
     var root_task = Task{
         .text = "test task!",
         .completed = false,
-        .children = &first_children,
+        .children = first_children,
     };
 
     var plane = try draw_task(stdplane, &root_task);
