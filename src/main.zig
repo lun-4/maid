@@ -427,7 +427,7 @@ const MainContext = struct {
                 if (self.cursor_state.selected_task) |selected_task| {
                     // we pressed enter:
                     // - unselect current task
-                    // - TODO create new task at index+1
+                    // - create new task at index+1
                     //   - TODO if root of tree, add to len+1
                     // - TODO redraw task tree
                     // - TODO render screen
@@ -437,8 +437,36 @@ const MainContext = struct {
 
                     const maybe_parent_info = selected_task.tui_state.parent_info;
                     if (maybe_parent_info) |parent_info| {
-                        _ = parent_info;
-                        // realloc...? fuck.
+                        logger.info("got parent!", .{});
+                        var new_task_list = TaskList.init(self.allocator);
+                        var new_task = Task{
+                            .text = "",
+                            .completed = false,
+                            .children = new_task_list,
+                        };
+                        try new_task.select();
+                        self.cursor_state.current_selected_task = new_task;
+                        try parent_info.parent_task.children.insert(parent_info.child_index + 1, new_task);
+
+                        // redraw task tree!
+                        // HOW DO I REDRAW THE TASK TREE
+                        //
+                        // walk backward in the tree until we find
+                        // task without parent info. that task is the root one
+                        var root_task: *Task = undefined;
+                        var current_task: *Task = selected_task;
+                        while (true) {
+                            logger.info("current_task = {}", .{current_task});
+                            if (current_task.tui_state.parent_info == null) {
+                                root_task = current_task;
+                                break;
+                            }
+                            current_task = current_task.tui_state.parent_info.?.parent_task;
+                        }
+                        _ = c.ncplane_destroy(self.root_task_plane);
+                        _ = c.notcurses_render(self.nc);
+                        var new_root_plane = try draw_task(self.standard_plane, root_task);
+                        self.root_task_plane = new_root_plane;
                     } else {
                         // we are the root of the tree, create a task at the end of it
                     }
