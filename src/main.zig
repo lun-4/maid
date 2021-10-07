@@ -334,6 +334,8 @@ const MainContext = struct {
     allocator: *std.mem.Allocator,
     nc: *c.notcurses,
     cursor_state: CursorState = .{},
+    root_task_plane: *c.ncplane,
+    standard_plane: *c.ncplane,
     const Self = @This();
 
     fn processNewSignals(self: *Self, plane: *c.ncplane) !void {
@@ -681,7 +683,12 @@ pub fn main() anyerror!void {
         .revents = 0,
     });
 
-    var ctx = MainContext{ .nc = nc, .allocator = allocator };
+    var ctx = MainContext{
+        .nc = nc,
+        .allocator = allocator,
+        .root_task_plane = plane,
+        .standard_plane = stdplane,
+    };
 
     // TODO logging main() errors back to logger handler
 
