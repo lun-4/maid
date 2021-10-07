@@ -444,10 +444,9 @@ const MainContext = struct {
                             .completed = false,
                             .children = new_task_list,
                         };
-                        try new_task.select();
-                        try parent_info.parent_task.children.insert(parent_info.child_index + 1, new_task);
-                        var new_task_as_ptr = &parent_info.parent_task.children.items[parent_info.parent_task.children.items.len - 1];
-                        self.cursor_state.selected_task = new_task_as_ptr;
+
+                        const new_task_child_index = parent_info.child_index + 1;
+                        try parent_info.parent_task.children.insert(new_task_child_index, new_task);
 
                         // redraw task tree!
                         // HOW DO I REDRAW THE TASK TREE
@@ -468,6 +467,10 @@ const MainContext = struct {
                         _ = c.notcurses_render(self.nc);
                         var new_root_plane = try draw_task(self.standard_plane, root_task);
                         self.root_task_plane = new_root_plane;
+
+                        var new_task_as_ptr = &parent_info.parent_task.children.items[new_task_child_index];
+                        try new_task_as_ptr.select();
+                        self.cursor_state.selected_task = new_task_as_ptr;
                     } else {
                         // we are the root of the tree, create a task at the end of it
                     }
