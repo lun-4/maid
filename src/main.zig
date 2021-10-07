@@ -222,6 +222,12 @@ fn draw_task_element(
     return task.children.items.len;
 }
 
+fn destroy_task_tree(task: *Task) error{FailedToDestroyPlane}!void {
+    if (c.ncplane_destroy(task.tui_state.plane) < 0) return error.FailedToDestroyPlane;
+    task.tui_state.plane = null;
+    for (task.children.items) |*child| try destroy_task_tree(child);
+}
+
 fn draw_task(parent_plane: *c.ncplane, task: *Task) !*c.ncplane {
     var nopts = std.mem.zeroes(c.ncplane_options);
     nopts.y = 5;
@@ -452,11 +458,10 @@ const MainContext = struct {
                         const new_task_child_index = parent_info.child_index + 1;
                         try parent_info.parent_task.children.insert(new_task_child_index, new_task);
 
-                        // redraw task tree!
-                        // HOW DO I REDRAW THE TASK TREE
-                        //
                         // walk backward in the tree until we find
                         // task without parent info. that task is the root one
+                        //
+                        // use it to redraw whole tree
                         var root_task: *Task = undefined;
                         var current_task: *Task = selected_task;
                         while (true) {
@@ -467,8 +472,10 @@ const MainContext = struct {
                             }
                             current_task = current_task.tui_state.parent_info.?.parent_task;
                         }
-                        _ = c.ncplane_destroy(self.root_task_plane);
-                        _ = c.notcurses_render(self.nc);
+                        // TODO task tree should be aware of vertical lines
+                        // for a fully working destroy
+                        try destroy_task_tree(root_task);
+                        if (c.notcurses_render(self.nc) < 0) return error.FailedToRender;
                         var new_root_plane = try draw_task(self.standard_plane, root_task);
                         self.root_task_plane = new_root_plane;
 
