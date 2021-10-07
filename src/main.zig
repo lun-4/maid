@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const TaskList = std.ArrayList(Task);
+
 const c = @cImport({
     @cInclude("stdlib.h");
     @cInclude("errno.h");
@@ -65,7 +67,7 @@ const Task = struct {
     // TODO id: u64,
     text: []const u8,
     completed: bool,
-    children: []Task,
+    children: *TaskList,
 
     tui_state: TaskTuiState = .{},
 
@@ -166,16 +168,16 @@ fn draw_task_element(
 
         draw_state.x_offset = 1;
         draw_state.y_offset = 1;
-        for (task.children) |*child, idx| {
+        for (task.children.items) |*child, idx| {
             draw_state.maybe_current_task_child_index = idx;
-            draw_state.maybe_current_task_parent_len = task.children.len;
-            const is_final_task = idx >= (task.children.len - 1);
+            draw_state.maybe_current_task_parent_len = task.children.items.len;
+            const is_final_task = idx >= (task.children.items.len - 1);
 
             const old_y = draw_state.y_offset;
             const child_children = try draw_task_element(plane, child, draw_state, shared_draw_state, ParentTaskInfo{
                 .parent_task = task,
                 .child_index = idx,
-                .parent_child_len = task.children.len,
+                .parent_child_len = task.children.items.len,
             });
             draw_state.y_offset += child_children + 1;
             const new_y = draw_state.y_offset;
@@ -217,7 +219,7 @@ fn draw_task_element(
 
         draw_state.* = old_draw_state;
     }
-    return task.children.len;
+    return task.children.items.len;
 }
 
 fn draw_task(parent_plane: *c.ncplane, task: *Task) !*c.ncplane {
@@ -319,7 +321,7 @@ fn findClickedPlane(plane: *c.ncplane, mouse_x: i32, mouse_y: i32) ?*c.ncplane {
         return plane;
     }
 
-    for (task.?.children) |child| {
+    for (task.?.children.items) |child| {
         var child_plane = child.tui_state.plane.?;
         const possible_matched_plane = findClickedPlane(child_plane, mouse_x, mouse_y);
         if (possible_matched_plane != null) return possible_matched_plane;
@@ -564,63 +566,46 @@ pub fn main() anyerror!void {
     var dimx: i32 = undefined;
     var stdplane = c.notcurses_stddim_yx(nc, &dimy, &dimx).?;
 
-    var third_children = [_]Task{
+    var empty_children = TaskList.init(allocator);
+    defer empty_children.deinit();
+
+    const third_children_items = [_]Task{
         .{
             .text = "doubly nested subtask 1",
             .completed = false,
-            .children = &[_]Task{},
+            .children = &empty_children,
         },
         .{
             .text = "doubly nested subtask 2",
             .completed = true,
-            .children = &[_]Task{},
+            .children = &empty_children,
         },
         .{
             .text = "doubly nested subtask 3",
             .completed = false,
-            .children = &[_]Task{},
-        },
-    };
-    var third_children_2 = [_]Task{
-        .{
-            .text = "doubly nested subtask 1",
-            .completed = false,
-            .children = &[_]Task{},
-        },
-        .{
-            .text = "doubly nested subtask 2",
-            .completed = true,
-            .children = &[_]Task{},
-        },
-        .{
-            .text = "doubly nested subtask 3",
-            .completed = false,
-            .children = &[_]Task{},
-        },
-    };
-    var third_children_3 = [_]Task{
-        .{
-            .text = "doubly nested subtask 1",
-            .completed = false,
-            .children = &[_]Task{},
-        },
-        .{
-            .text = "doubly nested subtask 2",
-            .completed = true,
-            .children = &[_]Task{},
-        },
-        .{
-            .text = "doubly nested subtask 3",
-            .completed = false,
-            .children = &[_]Task{},
+            .children = &empty_children,
         },
     };
 
-    var second_children = [_]Task{
+    var third_children = TaskList.init(allocator);
+    defer third_children.deinit();
+    try third_children.appendSlice(&third_children_items);
+
+    var third_children_2 = TaskList.init(allocator);
+    defer third_children_2.deinit();
+    try third_children_2.appendSlice(&third_children_items);
+
+    var third_children_3 = TaskList.init(allocator);
+    defer third_children_3.deinit();
+    try third_children_3.appendSlice(&third_children_items);
+
+    var second_children = TaskList.init(allocator);
+    defer second_children.deinit();
+    try second_children.appendSlice(&[_]Task{
         .{
             .text = "nested subtask 1",
             .completed = false,
-            .children = &[_]Task{},
+            .children = &empty_children,
         },
         .{
             .text = "nested subtask 2",
@@ -630,22 +615,23 @@ pub fn main() anyerror!void {
         .{
             .text = "nested subtask 3",
             .completed = false,
-            .children = &[_]Task{},
+            .children = &empty_children,
         },
         .{
             .text = "nested subtask 4",
             .completed = false,
             .children = &third_children_2,
         },
-    };
+    });
 
-    var first_children = [_]Task{
+    var first_children = TaskList.init(allocator);
+    defer first_children.deinit();
+    try first_children.appendSlice(&[_]Task{
         .{
             .text = "subtask 1",
             .completed = false,
             .children = &third_children_3,
         },
-
         .{
             .text = "subtask 2",
             .completed = true,
@@ -654,16 +640,17 @@ pub fn main() anyerror!void {
         .{
             .text = "subtask 3",
             .completed = false,
-            .children = &[_]Task{},
+            .children = &empty_children,
         },
-    };
-    var task = Task{
+    });
+
+    var root_task = Task{
         .text = "test task!",
         .completed = false,
         .children = &first_children,
     };
 
-    var plane = try draw_task(stdplane, &task);
+    var plane = try draw_task(stdplane, &root_task);
     _ = c.notcurses_render(nc);
 
     // our main loop is basically polling for stdin and the signal selfpipe.
