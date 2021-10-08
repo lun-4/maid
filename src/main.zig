@@ -93,6 +93,11 @@ const Task = struct {
         self.tui_state.selected = true;
     }
 
+    pub fn addChildAtIndex(self: *Self, index: usize, new_child_task: Task) !*Task {
+        try self.children.insert(index, new_child_task);
+        return &self.children.items[index];
+    }
+
     // TODO computed_priority: ?u32 = null,
 };
 
@@ -467,21 +472,20 @@ const MainContext = struct {
                     if (maybe_parent_info) |parent_info| {
                         logger.info("got parent!", .{});
                         var new_task_list = TaskList.init(self.allocator);
-                        var new_task = Task{
+                        var new_task_full = Task{
                             .text = "",
                             .completed = false,
                             .children = new_task_list,
                         };
 
                         const new_task_child_index = parent_info.child_index + 1;
-                        try parent_info.parent_task.children.insert(new_task_child_index, new_task);
+                        var new_task_ptr = try parent_info.parent_task.addChildAtIndex(new_task_child_index, new_task_full);
 
                         var root_task = findRootTask(selected_task);
                         try self.recreateTreePlane(root_task);
 
-                        var new_task_as_ptr = &parent_info.parent_task.children.items[new_task_child_index];
-                        try new_task_as_ptr.select();
-                        self.cursor_state.selected_task = new_task_as_ptr;
+                        try new_task_ptr.select();
+                        self.cursor_state.selected_task = new_task_ptr;
                     } else {
                         // TODO we are the root of the tree, create a task at the end of it
                     }
@@ -499,14 +503,13 @@ const MainContext = struct {
                         .children = new_task_list,
                     };
 
-                    try selected_task.children.insert(selected_task.children.items.len, new_task);
+                    var new_task_ptr = try selected_task.addChildAtIndex(selected_task.children.items.len, new_task);
 
                     var root_task = findRootTask(selected_task);
                     try self.recreateTreePlane(root_task);
 
-                    var new_task_as_ptr = &selected_task.children.items[selected_task.children.items.len - 1];
-                    try new_task_as_ptr.select();
-                    self.cursor_state.selected_task = new_task_as_ptr;
+                    try new_task_ptr.select();
+                    self.cursor_state.selected_task = new_task_ptr;
 
                     _ = c.notcurses_render(self.nc);
                 }
