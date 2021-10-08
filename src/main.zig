@@ -672,6 +672,27 @@ pub fn main() anyerror!void {
     defer third_children_3.deinit();
     try third_children_3.appendSlice(&third_children_items);
 
+    const fourth_children_items = [_]Task{
+        .{
+            .text = "",
+            .completed = false,
+            .children = empty_children,
+        },
+        .{
+            .text = "",
+            .completed = true,
+            .children = empty_children,
+        },
+        .{
+            .text = "",
+            .completed = false,
+            .children = third_children_2,
+        },
+    };
+    var fourth_children = TaskList.init(allocator);
+    defer fourth_children.deinit();
+    try fourth_children.appendSlice(&fourth_children_items);
+
     var second_children = TaskList.init(allocator);
     defer second_children.deinit();
     try second_children.appendSlice(&[_]Task{
@@ -688,12 +709,12 @@ pub fn main() anyerror!void {
         .{
             .text = "nested subtask 3",
             .completed = false,
-            .children = empty_children,
+            .children = fourth_children,
         },
         .{
             .text = "nested subtask 4",
             .completed = false,
-            .children = third_children_2,
+            .children = empty_children,
         },
     });
 
