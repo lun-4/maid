@@ -477,9 +477,11 @@ const MainContext = struct {
                             .completed = false,
                             .children = new_task_list,
                         };
-
-                        const new_task_child_index = parent_info.child_index + 1;
-                        var new_task_ptr = try parent_info.parent_task.addChildAtIndex(new_task_child_index, new_task_full);
+                        // add task right after current selected's index
+                        var new_task_ptr = try parent_info.parent_task.addChildAtIndex(
+                            parent_info.child_index + 1,
+                            new_task_full,
+                        );
 
                         var root_task = findRootTask(selected_task);
                         try self.recreateTreePlane(root_task);
